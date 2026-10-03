@@ -55,3 +55,12 @@ Sites build-site.mjs调用npm.cmd时在当前目录错误解析 npm-prefix.js/np
 ## 2026-10-03 14:49 交付收尾
 生产原生部署成功（deployment appgdep_6ac0a4c8eb5c819185bb77b89cdbebbd，源14b04e28b6fd3dba034ba2d25bcbc877dd53336b，env revision1），网址 https://investment-x-buddy-lab.golden-robin-3691.chatgpt.site。GitHub已验证用户建仓与main初始提交802702cca5c2d2c7c9cf3108260e8c0ea087f4be、push/admin权限，完整源码上传进入最后步骤。最新测试中unknown schema类型修正后npm run typecheck、npm run lint及12项模型测试通过；该修正仅测试类型，运行时代码与已发布版本一致。完整真实报告未再次验收，保留边界说明。
 此前自动审批拒绝了文件权限变更；未执行，改用限定项目文件写入。
+
+
+## 2026-10-03 14:54 GitHub与提交附件验收
+GitHub main已上传201个项目文件；首次交付提交f4af3a57e573e4a34330911987caef76724372b7，README回读确认网站和源码链接。最新全量npm test再次112/112通过。提交ZIP从git archive HEAD生成，235条目（含目录）、868081字节，小于30MB；逐条扫描实际5项私密值匹配0，禁止配置/缓存条目0。最终文档补充后ZIP将重新生成并再次核验，校验回执在D:/projects/THSwork/investment-x-buddy-delivery-receipt.json。
+生产网站浏览器已加载研究表单，成功生成18步审批计划并可启动演示；生产原生部署succeeded。本机Node直连生产域名TLS曾ECONNRESET，改用实际浏览器核验，未改变TLS校验。
+
+
+## 2026-10-03 14:56 生产完整演示通过
+实际Chrome生产地址完成默认三公司构造数据研究：18/18步骤、18证据、18/24工具调用、0/4模型调用、费用0、检查点version46。界面显示已完成、报告验证通过、原始字段引用、事实/推断/局限、导出成果与长期记忆入口；演示数据明确标注构造。生产数据库和API全流程已验证。
