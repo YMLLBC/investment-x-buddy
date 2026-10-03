@@ -4,4 +4,4 @@ node -e &quot;console.log(require('node:crypto').randomBytes(32).toString('hex')
 </code></pre><p>把生成值填入.dev.vars中的SESSION_SECRET。只体验演示无需金融或模型密钥；真实模式需填写DEEPSEEK_API_KEY、FUYAO_API_KEY、IFIND_API_KEY。无需设置访问码，不要提交私密配置。</p><pre><code>npm run build
 node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_brave_nicolaos.sql
 npm run dev
-</code></pre><p>打开http://127.0.0.1:5173；端口被占用时以终端实际地址为准。迁移命令只在首次初始化空库时执行，已有数据库不要重放。</p><p>复核自动检查：npm test、npm run typecheck、npm run lint。浏览器回归按README“验证”部分安装Chromium，在开发服务运行时执行npm run test:e2e。</p></main></html>
+</code></pre><p>打开http://127.0.0.1:5173；端口被占用时以终端实际地址为准。迁移命令只在首次初始化空库时执行，已有数据库不要重放。</p><p>复核自动检查：npm test、npm run typecheck、npm run lint。浏览器回归按docs/TECHNICAL_REFERENCE.md“验证”部分安装Chromium，在开发服务运行时执行npm run test:e2e。</p></main></html>

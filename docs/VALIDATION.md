@@ -70,3 +70,10 @@ GitHub main已上传201个项目文件；首次交付提交f4af3a57e573e4a343309
 我已移除服务端访问码校验、前端输入弹窗及本地/生产访问码配置。匿名bootstrap live可建会话；同浏览器保留owner，过期后创建新owner，研究仍按owner/mode隔离。无配置时503，旧accessCode字段400，签名Cookie/CSRF/计划审批/调用与费用限制仍生效。
 命令：node --experimental-strip-types --test --test-name-pattern=无需访问码|无访问码配置 tests/server.test.ts；初始2项失败（403/400与期望200不同），实现后通过。完整npm test：114/114；npm run typecheck、npm run lint退出0；npm run test:e2e：7/7、约1.1分钟，其中含手机免访问码切换及过期自动重建；未在浏览器回归中付费调用真实模型。
 我新增根目录面试官操作指南.md及开始阅读.html，更新README、DELIVERY、AI使用说明和当前接口变量；历史阶段日志保留。生产访问码变量删除后环境revision2，待本次部署应用。
+
+
+## 2026-10-03 15:22 修订版本发布与README回读
+我完成生产第2版发布，version appgprj_6abf79697e588191a9f81cbcf0bd864c~appgver_24c313c180088191946b0c40936b98f4，源提交081c8767297e7579841ac020d98152c3e9fd8ec5；deployment appgdep_6ac0ac8f46d48191aa050ee3bb93fdcd，状态succeeded，env revision2。部署请求曾出现返回传输错误；通过同一version查询已存在deployment并核验成功，没有重复部署。
+GitHub修订提交7623627a70919d0cbebf4d575fffa886f9f4b289、树34cfa29ca098aa641e4c488bdee9e73cea2f6458与本地一致；README前15行回读确认目标读者为面试官、第一人称、在线操作入口。node scripts/check-secrets.mjs检查275文件和4私密值，findings为空。
+
+生产Chrome实测：刷新第2版后直接选择真实研究，未出现访问码或登录弹窗；真实表单与生成计划按钮可用，今日预算显示0/5美元，未触发模型研究。旧演示18步报告仍可读取，部署保留了持久状态。

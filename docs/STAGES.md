@@ -52,3 +52,10 @@ GitHub main已上传201个项目文件；首次交付提交f4af3a57e573e4a343309
 
 ## 2026-10-03 15:17 README评审入口重写
 我将README重写为面向面试官的作品介绍：我做了什么、如何在线体验、希望重点检查的能力、真实研究入口、Harness实现、验证结果与边界。安装与配置细节保留在TECHNICAL_REFERENCE.md，避免主入口混杂开发记录。根目录指南和HTML保留详细步骤。
+
+
+## 2026-10-03 15:22 修订版本发布与README回读
+我完成生产第2版发布，version appgprj_6abf79697e588191a9f81cbcf0bd864c~appgver_24c313c180088191946b0c40936b98f4，源提交081c8767297e7579841ac020d98152c3e9fd8ec5；deployment appgdep_6ac0ac8f46d48191aa050ee3bb93fdcd，状态succeeded，env revision2。部署请求曾出现返回传输错误；通过同一version查询已存在deployment并核验成功，没有重复部署。
+GitHub修订提交7623627a70919d0cbebf4d575fffa886f9f4b289、树34cfa29ca098aa641e4c488bdee9e73cea2f6458与本地一致；README前15行回读确认目标读者为面试官、第一人称、在线操作入口。node scripts/check-secrets.mjs检查275文件和4私密值，findings为空。
+
+生产Chrome实测：刷新第2版后直接选择真实研究，未出现访问码或登录弹窗；真实表单与生成计划按钮可用，今日预算显示0/5美元，未触发模型研究。旧演示18步报告仍可读取，部署保留了持久状态。
