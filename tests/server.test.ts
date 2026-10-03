@@ -37,12 +37,12 @@ async function setup(dependencies: EngineDependencies = {}, overrides: Partial<B
   async function finish(view: View) { for (let i = 0; i < 30 && view.run.status === "running"; i++) { const r = await act(view, "advance"); assert.equal(r.response.status, 200); view = r.data; } return view; }
   return { db, sqlite, req, create, act, finish, env, repo: new BuddyRepository(db), cookie: () => cookie, server };
 }
-const liveConfig = { DEEPSEEK_API_KEY: "synthetic-model-test", FUYAO_API_KEY: "synthetic-finance-test", IFIND_API_KEY: "synthetic-mcp-test", RESEARCH_ACCESS_CODE: "synthetic-access-test" };
+const liveConfig = { DEEPSEEK_API_KEY: "synthetic-model-test", FUYAO_API_KEY: "synthetic-finance-test", IFIND_API_KEY: "synthetic-mcp-test" };
 const functionCall = (name: string, args: unknown) => ({ status: "completed", output: [{ type: "function_call", name, arguments: JSON.stringify(args) }] });
 const planOutput = () => functionCall("propose_research_plan", { title: "现金流研究", tasks: ["income", "cashflow", "valuation"].map(k => ({ title: k, tool: "fuyao_" + k, arguments_json: JSON.stringify({ symbol: "600519.SH" }) })), limitations: [] });
 const actualUsage = { inputTokens: 100, outputTokens: 20, estimatedUsd: 0.000054 };
 async function createLive(s: Awaited<ReturnType<typeof setup>>) {
-  assert.equal((await s.req("session?mode=demo", { accessCode: liveConfig.RESEARCH_ACCESS_CODE })).response.status, 200);
+  assert.equal((await s.req("session?mode=demo", { mode: "live" })).response.status, 200);
   const r = await s.req("runs?mode=live", { goal: "年度现金流研究", symbols: ["600519.SH"], requestId: crypto.randomUUID() }); assert.equal(r.response.status, 201); return r.data;
 }
 async function liveAct(s: Awaited<ReturnType<typeof setup>>, v: View, action: string, extras = {}) { return s.req(`runs/${v.run.id}/${action}?mode=live`, { version: v.run.version, ...extras }); }
@@ -79,7 +79,7 @@ test("拒绝计划无工具调用；tighten 单工具预算不能 resume 重置"
 });
 
 test("跨 owner/mode scope、live 未配置和 CSRF 均拒绝", async () => {
-  const s = await setup(); try { const v = await s.create(); const other = await signSession(newSession("demo", Date.now()), secret); assert.equal((await s.req(`runs/${v.run.id}?mode=demo`, undefined, "GET", { Cookie: "buddy_session=" + other })).response.status, 404); assert.equal((await s.req("runs?mode=demo", { goal: "不同 owner", symbols, requestId: v.run.id }, "POST", { Cookie: "buddy_session=" + other })).response.status, 409); assert.equal((await s.req(`runs/${v.run.id}?mode=live`)).response.status, 403); assert.equal((await s.req("session?mode=demo", { accessCode: "no-key" })).response.status, 503); assert.equal((await s.req("memory?mode=demo", { text: "x", kind: "research", confirmed: true }, "POST", { Origin: "https://evil.test" })).response.status, 403); assert.equal((await s.req("memory?mode=demo", { text: "x", kind: "research", confirmed: true }, "POST", { "Sec-Fetch-Site": "cross-site" })).response.status, 403); assert.equal((await s.req("memory?mode=demo", { text: "x", kind: "research", confirmed: true }, "POST", { "X-Buddy-Client": "invalid" })).response.status, 403); } finally { s.sqlite.close(); }
+  const s = await setup(); try { const v = await s.create(); const other = await signSession(newSession("demo", Date.now()), secret); assert.equal((await s.req(`runs/${v.run.id}?mode=demo`, undefined, "GET", { Cookie: "buddy_session=" + other })).response.status, 404); assert.equal((await s.req("runs?mode=demo", { goal: "不同 owner", symbols, requestId: v.run.id }, "POST", { Cookie: "buddy_session=" + other })).response.status, 409); assert.equal((await s.req(`runs/${v.run.id}?mode=live`)).response.status, 403); assert.equal((await s.req("session?mode=demo", { mode: "live" })).response.status, 503); assert.equal((await s.req("memory?mode=demo", { text: "x", kind: "research", confirmed: true }, "POST", { Origin: "https://evil.test" })).response.status, 403); assert.equal((await s.req("memory?mode=demo", { text: "x", kind: "research", confirmed: true }, "POST", { "Sec-Fetch-Site": "cross-site" })).response.status, 403); assert.equal((await s.req("memory?mode=demo", { text: "x", kind: "research", confirmed: true }, "POST", { "X-Buddy-Client": "invalid" })).response.status, 403); } finally { s.sqlite.close(); }
 });
 
 test("显式 memory 确认、快照及删除 scope", async () => {
@@ -111,7 +111,7 @@ test("live 同 owner 升降级、demo 访问及 parent scope 保持隔离", asyn
     assert.equal((await liveAct(s, live, "approve", { approved: true })).response.status, 409);
     const downgraded = await s.req("session?mode=live", { mode: "demo" }); assert.equal(downgraded.data.session.mode, "demo");
     assert.equal((await s.req(`runs/${live.run.id}?mode=live`)).response.status, 403);
-    await s.req("session?mode=demo", { accessCode: liveConfig.RESEARCH_ACCESS_CODE }); assert.equal((await s.req(`runs/${live.run.id}?mode=live`)).response.status, 200);
+    await s.req("session?mode=demo", { mode: "live" }); assert.equal((await s.req(`runs/${live.run.id}?mode=live`)).response.status, 200);
     assert.equal(JSON.parse(Buffer.from(oldOwner, "base64url").toString()).ownerId, JSON.parse(Buffer.from(s.cookie().split("=", 2)[1].split(".")[0], "base64url").toString()).ownerId);
     assert.equal((await s.req("runs?mode=live", { goal: "父研究", symbols: ["600519.SH"], requestId: crypto.randomUUID(), parentId: demo.run.id })).response.status, 404);
   } finally { s.sqlite.close(); }
@@ -198,15 +198,15 @@ test("父研究摘要绑定规划和压缩后复核上下文，不能跨 mode �
   } finally { s.sqlite.close(); }
 });
 
-test("GET/mutation/登录/live创建限流持久化，窗口过后恢复", async () => {
+test("GET/mutation/模式切换/live创建限流持久化，窗口过后恢复", async () => {
   let now = Date.now(); const s = await setup({ now: () => now }, liveConfig);
   try {
     for (let i = 0; i < 59; i++) assert.equal((await s.req("memory?mode=demo")).response.status, 200);
     assert.equal((await s.req("memory?mode=demo")).response.status, 429); now += 60000;
     assert.equal((await s.req("memory?mode=demo")).response.status, 200);
-    for (let i = 0; i < 8; i++) assert.equal((await s.req("session?mode=demo", { accessCode: "invalid" })).response.status, 403);
-    assert.equal((await s.req("session?mode=demo", { accessCode: liveConfig.RESEARCH_ACCESS_CODE })).response.status, 429); now += 900000;
-    assert.equal((await s.req("session?mode=demo", { accessCode: liveConfig.RESEARCH_ACCESS_CODE })).response.status, 200);
+    for (let i = 0; i < 8; i++) assert.equal((await s.req("session?mode=demo", { mode: "live" })).response.status, 200);
+    assert.equal((await s.req("session?mode=demo", { mode: "live" })).response.status, 429); now += 900000;
+    assert.equal((await s.req("session?mode=demo", { mode: "live" })).response.status, 200);
     for (let i = 0; i < 6; i++) assert.equal((await s.req("runs?mode=live", { goal: "研究", symbols: ["600519.SH"], requestId: crypto.randomUUID() })).response.status, 201);
     assert.equal((await s.req("runs?mode=live", { goal: "研究", symbols: ["600519.SH"], requestId: crypto.randomUUID() })).response.status, 429);
     now += 60000;
@@ -243,7 +243,7 @@ test("P2 父研究九条长记忆压缩后，子上下文仍是完整有界 JSON
   const inputs: string[] = [];
   const s = await setup({ execute: (task, _mode, scenario, at) => executeDemo(task, scenario, at), model: async payload => { inputs.push(String(payload.input)); return { raw: planOutput(), usage: actualUsage }; } }, liveConfig);
   try {
-    await s.req("session?mode=demo", { accessCode: liveConfig.RESEARCH_ACCESS_CODE });
+    await s.req("session?mode=demo", { mode: "live" });
     for (let i = 0; i < 9; i++) assert.equal((await s.req("memory?mode=live", { text: `记忆${i}:` + "约".repeat(1982), kind: "research", confirmed: true })).response.status, 201);
     const created = await s.req("runs?mode=live", { goal: "长记忆父研究", symbols: ["600519.SH"], requestId: crypto.randomUUID() });
     let parent = created.data; parent = (await liveAct(s, parent, "advance")).data; parent = (await liveAct(s, parent, "approve", { approved: true })).data; parent = (await liveAct(s, parent, "advance")).data;
@@ -274,7 +274,7 @@ test("P2 全部三工具耗尽额度后，模型复核TIMEOUT可恢复且不增�
   let calls = 0;
   const s = await setup({ execute: (task, _mode, scenario, at) => executeDemo(task, scenario, at), model: async () => { calls++; if (calls === 2) throw new ProviderError("TIMEOUT", "temporary review failure", true); return { raw: calls === 1 ? planOutput() : functionCall("write_evidence_review", { summary: "恢复复核完成", claims: [], limitations: [], questions: [] }), usage: actualUsage }; } }, liveConfig);
   try {
-    await s.req("session?mode=demo", { accessCode: liveConfig.RESEARCH_ACCESS_CODE });
+    await s.req("session?mode=demo", { mode: "live" });
     let v = (await s.req("runs?mode=live", { goal: "三工具研究", symbols: ["600519.SH"], limits: { maxToolCalls: 3 }, requestId: crypto.randomUUID() })).data;
     v = (await liveAct(s, v, "advance")).data; v = (await liveAct(s, v, "approve", { approved: true })).data;
     for (let i = 0; i < 4; i++) v = (await liveAct(s, v, "advance")).data;
@@ -291,7 +291,7 @@ test("P2 复核阶段恢复仍拒绝累计模型、费用和原始起点运行�
     const now = Date.now(); let calls = 0;
     const s = await setup({ now: () => now, execute: (task, _mode, scenario, at) => executeDemo(task, scenario, at), model: async () => { calls++; if (calls > 1) throw new ProviderError("TIMEOUT", "temporary review failure", true); return { raw: planOutput(), usage: actualUsage }; } }, liveConfig);
     try {
-      await s.req("session?mode=demo", { accessCode: liveConfig.RESEARCH_ACCESS_CODE });
+      await s.req("session?mode=demo", { mode: "live" });
       let v = (await s.req("runs?mode=live", { goal: "复核预算边界", symbols: ["600519.SH"], limits: { maxToolCalls: 3 }, requestId: crypto.randomUUID() })).data;
       v = (await liveAct(s, v, "advance")).data; v = (await liveAct(s, v, "approve", { approved: true })).data;
       for (let i = 0; i < 4; i++) v = (await liveAct(s, v, "advance")).data;
@@ -307,3 +307,16 @@ test("P2 复核阶段恢复仍拒绝累计模型、费用和原始起点运行�
     } finally { s.sqlite.close(); }
   }
 });
+
+
+test("无需访问码：匿名真实入口、过期恢复及owner隔离", async () => {
+ const s=await setup({},liveConfig); try {
+ const demoOwner=JSON.parse(Buffer.from(s.cookie().split("=")[1].split(".")[0],"base64url").toString()).ownerId;
+ const entered=await s.req("bootstrap?mode=live");assert.equal(entered.response.status,200);assert.equal(entered.data.capabilities.liveAvailable,true);assert.equal(entered.data.session.mode,"live");
+ assert.equal(JSON.parse(Buffer.from(s.cookie().split("=")[1].split(".")[0],"base64url").toString()).ownerId,demoOwner);
+ const created=await s.req("runs?mode=live",{goal:"盈利质量",symbols:["600519.SH"],requestId:crypto.randomUUID()});assert.equal(created.response.status,201);assert.equal(created.data.run.approved,false);assert.equal(created.data.run.metrics.toolCalls,0);
+ const fresh=await s.req("bootstrap?mode=live",undefined,"GET",{Cookie:"buddy_session=expired.invalid"});assert.equal(fresh.response.status,200);assert.equal(fresh.data.session.mode,"live");assert.equal(fresh.data.runs.length,0);
+ assert.equal((await s.req("runs/"+created.data.run.id+"?mode=live")).response.status,404);
+ }finally{s.sqlite.close()}
+});
+test("无访问码配置：显式live切换可用，旧字段和非法模式拒绝",async()=>{const s=await setup({},liveConfig);try{assert.equal((await s.req("session?mode=demo",{mode:"live"})).response.status,200);assert.equal((await s.req("session?mode=live",{mode:"demo"})).response.status,200);assert.equal((await s.req("session?mode=demo",{mode:"other"})).response.status,400);assert.equal((await s.req("session?mode=demo",{accessCode:"obsolete"})).response.status,400)}finally{s.sqlite.close()}});

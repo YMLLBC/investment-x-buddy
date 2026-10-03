@@ -16,7 +16,7 @@ A股：hexin-ifind-ds-stock-mcp；新闻：hexin-ifind-ds-news-mcp。
 ## 安全
 工具和模型文本视为不可信；只执行注册且schema校验的只读工具，禁止任意URL/脚本/文件/交易调用。限制输入与响应长度。真实数据按会话隔离。公开示例为构造数据，Authorization不进入日志。
 
-变量：DEEPSEEK_API_KEY、DEEPSEEK_BASE_URL、DEEPSEEK_MODEL、FUYAO_API_KEY、IFIND_API_KEY、IFIND_MCP_BASE_URL、RESEARCH_ACCESS_CODE。真实值仅忽略文件和部署secrets。
+变量：DEEPSEEK_API_KEY、DEEPSEEK_BASE_URL、DEEPSEEK_MODEL、FUYAO_API_KEY、IFIND_API_KEY、IFIND_MCP_BASE_URL。真实值仅忽略文件和部署secrets。
 
 ## 阶段3真实取数结果（2026-10-02）
 扶摇实际财务字段与官方示例相符，返回最近3期年度累计数据（2025/2024/2023 FY），币种CNY、金额元。真实样本已核验营业收入、合并净利润与经营现金流字段存在且可解析；具体供应商数值仅保留在本地私密记录，公开仓库和演示不分发真实供应商样本。数据尚未与原始披露做二次交叉核验，不构成投资判断。原始路径 data.item.0.<字段>、period_end_ms以及SHA256已保留。

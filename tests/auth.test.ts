@@ -25,10 +25,8 @@ test("session authentication rejects forgery, expiry and invalid payloads", asyn
   }
   await assert.rejects(auth.signSession(session, "short"));
 });
-test("access codes preserve whitespace and cookies respect local HTTP and duplicate boundaries", async () => {
+test("cookies respect local HTTP and duplicate boundaries", async () => {
   assert.ok(auth);
-  assert.equal(await auth.checkAccessCode("abc", "abc"), true);
-  for (const [a,b] of [["", ""], ["abc ", "abc"], ["abc", "abd"], ["x".repeat(129), "x".repeat(129)]]) assert.equal(await auth.checkAccessCode(a,b), false);
   const cookie = auth.sessionCookie("abc.def", "https://example.test");
   for (const flag of ["buddy_session=abc.def", "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=604800", "Secure"]) assert.ok(cookie.includes(flag));
   assert.ok(!auth.sessionCookie("abc.def", "http://localhost").includes("Secure"));

@@ -1,6 +1,6 @@
 import type { AgentTask, RunLimits, RunMode, Session } from "./types.ts";
 import { BuddyRepository, type BuddyDatabase, type RunRecord } from "./repository.ts";
-import { checkAccessCode, newSession, readSessionCookie, sessionCookie, signSession, verifySession } from "./auth.ts";
+import { newSession, readSessionCookie, sessionCookie, signSession, verifySession } from "./auth.ts";
 import { addEvent, approveRun, createRun, DEFAULT_LIMITS, HarnessError, stopRun, validatePlan } from "./harness.ts";
 import { demoPlan } from "./demo.ts";
 import { curatedTools, ProviderError } from "./providers.ts";
@@ -9,7 +9,7 @@ import { exportReport } from "./report.ts";
 import { advanceRun, clock, dailyCap, resumeAtCheckpoint, ServiceError, tightened, userPause, type EngineDependencies } from "./engine.ts";
 import type { ModelConfig } from "./model.ts";
 
-type ConfigKey = "SESSION_SECRET" | "RESEARCH_ACCESS_CODE" | "DEEPSEEK_API_KEY" | "DEEPSEEK_BASE_URL" | "DEEPSEEK_MODEL" | "DEEPSEEK_REASONING_EFFORT" | "FUYAO_API_KEY" | "IFIND_API_KEY" | "IFIND_MCP_BASE_URL" | "MODEL_INPUT_USD_PER_MILLION" | "MODEL_CACHED_INPUT_USD_PER_MILLION" | "MODEL_OUTPUT_USD_PER_MILLION" | "RUN_BUDGET_USD" | "DAILY_MODEL_BUDGET_USD";
+type ConfigKey = "SESSION_SECRET" | "DEEPSEEK_API_KEY" | "DEEPSEEK_BASE_URL" | "DEEPSEEK_MODEL" | "DEEPSEEK_REASONING_EFFORT" | "FUYAO_API_KEY" | "IFIND_API_KEY" | "IFIND_MCP_BASE_URL" | "MODEL_INPUT_USD_PER_MILLION" | "MODEL_CACHED_INPUT_USD_PER_MILLION" | "MODEL_OUTPUT_USD_PER_MILLION" | "RUN_BUDGET_USD" | "DAILY_MODEL_BUDGET_USD";
 export type BuddyEnv = Partial<Record<ConfigKey, string>> & { DB?: BuddyDatabase };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function json(data: unknown, status = 200, cookie?: string): Response {
@@ -34,7 +34,7 @@ function fields(body: Record<string, unknown>, allowed: string[]): void { if (Ob
 function text(value: unknown, max: number): string { if (typeof value !== "string" || !value.trim() || value.length > max) bad("文本不能为空或超过长度限制。"); return value.trim(); }
 function uuid(value: unknown): string { if (typeof value !== "string" || !UUID.test(value)) bad("记录标识必须是有效 UUID。"); return value; }
 function version(body: Record<string, unknown>): number { if (!Number.isSafeInteger(body.version) || Number(body.version) < 0) bad("版本号必须是非负整数。"); return Number(body.version); }
-function liveAvailable(env: BuddyEnv): boolean { return Boolean(env.DB && env.SESSION_SECRET && env.SESSION_SECRET.length >= 32 && env.RESEARCH_ACCESS_CODE?.trim() && env.DEEPSEEK_API_KEY?.trim() && env.FUYAO_API_KEY?.trim() && env.IFIND_API_KEY?.trim()); }
+function liveAvailable(env: BuddyEnv): boolean { return Boolean(env.DB && env.SESSION_SECRET && env.SESSION_SECRET.length >= 32 && env.DEEPSEEK_API_KEY?.trim() && env.FUYAO_API_KEY?.trim() && env.IFIND_API_KEY?.trim()); }
 function config(env: BuddyEnv): ModelConfig { const result: ModelConfig = {}; for (const [key, value] of Object.entries(env)) if (key !== "DB" && typeof value === "string") result[key] = value; return result; }
 function mutationGuard(request: Request): void {
   if (request.headers.get("X-Buddy-Client") !== "workbench" || request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json") throw new ServiceError(403, "CSRF", "请求来源或内容类型不符合工作台要求。");
@@ -86,6 +86,11 @@ export async function handleBuddy(request: Request, env: BuddyEnv, dependencies:
     let cookie: string | undefined;
     if (!session && bootstrap) { session = newSession("demo", now); cookie = sessionCookie(await signSession(session, env.SESSION_SECRET), request.url); }
     if (!session) throw new ServiceError(401, "UNAUTHORIZED", "会话已失效，请刷新工作台。");
+    // Live access is public; retain the signed browser owner and record isolation.
+    if (bootstrap && url.searchParams.get("mode") === "live") {
+      if (!liveAvailable(env)) throw new ServiceError(503, "CONFIGURATION", "真实研究尚未完成服务配置。");
+      if (session.mode !== "live") { session = { ...session, mode: "live" }; cookie = sessionCookie(await signSession(session, env.SESSION_SECRET), request.url); }
+    }
     const mode = modeFor(url, bootstrap, session);
     await rate(repo, `${mutation ? "mutation" : "get"}:${session.ownerId}`, 60000, mutation ? 40 : 60, now);
     const body = mutation ? await readBody(request) : undefined;
@@ -95,15 +100,14 @@ export async function handleBuddy(request: Request, env: BuddyEnv, dependencies:
     }
     if (path.length === 1 && path[0] === "session" && method === "POST") {
       const input = body!;
-      if (input.mode === "demo") { fields(input, ["mode"]); session = { ...session, mode: "demo", expiresAt: now + 604800000 }; }
-      else {
-        fields(input, ["accessCode"]); const supplied = text(input.accessCode, 128);
+      fields(input, ["mode"]);
+      if (input.mode !== "demo" && input.mode !== "live") bad("请选择 demo 或 live 模式。");
+      if (input.mode === "live") {
         const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
-        await rate(repo, `login-ip:${ip}`, 900000, 8, now); await rate(repo, `login-owner:${session.ownerId}`, 900000, 8, now);
+        await rate(repo, `switch-ip:${ip}`, 900000, 8, now); await rate(repo, `switch-owner:${session.ownerId}`, 900000, 8, now);
         if (!liveAvailable(env)) throw new ServiceError(503, "CONFIGURATION", "真实研究尚未完成服务配置。");
-        if (!await checkAccessCode(supplied, env.RESEARCH_ACCESS_CODE!)) throw new ServiceError(403, "ACCESS_DENIED", "访问码无效。");
-        session = { ...session, mode: "live", expiresAt: now + 604800000 };
       }
+      session = { ...session, mode: input.mode, expiresAt: now + 604800000 };
       return json({ session: { mode: session.mode, expiresAt: session.expiresAt } }, 200, sessionCookie(await signSession(session, env.SESSION_SECRET), request.url));
     }
     if (path[0] === "memory") {

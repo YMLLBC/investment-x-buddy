@@ -43,12 +43,6 @@ export async function verifySession(token: string, secret: string, now: number):
     return session;
   } catch { return null; }
 }
-export async function checkAccessCode(supplied: string, expected: string): Promise<boolean> {
-  if (typeof supplied !== "string" || typeof expected !== "string" || supplied.length < 1 || supplied.length > 128 || expected.length < 1 || expected.length > 128) return false;
-  const hmac = await crypto.subtle.importKey("raw", encoder.encode(expected), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
-  const expectedDigest = await crypto.subtle.sign("HMAC", hmac, encoder.encode(expected));
-  return crypto.subtle.verify("HMAC", hmac, expectedDigest, encoder.encode(supplied));
-}
 export function sessionCookie(token: string, url: string): string {
   if (!/^[A-Za-z0-9_.-]+$/.test(token) || token.length > 1068) throw new Error("Invalid cookie token");
   return `buddy_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${new URL(url).protocol === "https:" ? "; Secure" : ""}`;

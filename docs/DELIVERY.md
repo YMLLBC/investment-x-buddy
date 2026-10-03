@@ -1,15 +1,13 @@
-# 提交说明
+# 我的提交说明
 
-在线体验：https://investment-x-buddy-lab.golden-robin-3691.chatgpt.site
-源码仓库：https://github.com/YMLLBC/investment-x-buddy
-附件：D:/projects/THSwork/investment-x-buddy-submission.zip（小于30MB）。
+面试官您好，我提交的是投资 X Buddy，一个面向投资研究者的个人 Agent 工作台。
 
-包含源码、README、设计计划、AI使用记录、阶段完成记录、数据接口说明、测试与审查记录及界面截图。API密钥、个人访问码、供应商原始真实数据、依赖和缓存均排除。
+我建议先打开 https://investment-x-buddy-lab.golden-robin-3691.chatgpt.site/ 。无需登录或访问码。保持演示模式，点击“生成研究计划”→“确认计划并开始”→查看数据对比、证据库和研究成果→导出报告。点击证据编号核对原始JSON与哈希，写入长期记忆需明确确认。
 
-112项单元测试、7项Chromium端到端测试、类型检查、ESLint与生产构建通过。部署原生状态succeeded，配置revision1。Chrome生产全流程已完成18步与18证据，报告验证通过，费用0。
+详细步骤见附件根目录“面试官操作指南.md”；也可双击“开始阅读.html”。真实接口从右上角“真实研究 · 金融接口”进入，建议先只研究600519.SH；仍保留计划审批、调用次数与费用预算。
 
-真实规划、单份复核及完整研究9个只读工具均有实测记录；完整研究报告曾因模型返回问题数量超过上限而暂停，schema已修正并回归通过，完整真实研究尚需再次验收，不声称已完成。
+源码：https://github.com/YMLLBC/investment-x-buddy 。我提供了源码、实施计划、接口与口径说明、测试记录、AI协作说明与阶段审查，未包含实际API密钥、供应商私密样本、依赖或缓存。
 
-私密真实模式：个人访问码在本地.dev.vars中RESEARCH_ACCESS_CODE项，勿上传；生产已配置。
+本次114项单元测试、7项浏览器回归、类型与代码检查通过；线上状态见STATUS。完整真实报告曾因输出列表校验而暂停，schema已修正，但完整真实报告仍待再次验收，我没有声称其已全部通过。
 
-启动按README执行npm ci、配置本地.dev.vars、构建、迁移D1及npm run dev。正式路径均在D盘。
+我使用Codex辅助开发与审查，过程见AI_USAGE。本地运行按README和操作指南执行。

@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";import path from "node:path";import {fileURLToPath} from "node:url";
 const root=fileURLToPath(new URL("../",import.meta.url));process.chdir(root);
-process.loadEnvFile(".env.local");const config=process.env;
-if(!config.RESEARCH_ACCESS_CODE)throw new Error("Private access configuration missing");
+process.loadEnvFile(".env.local");
 const base=process.env.BUDDY_BASE_URL??"http://127.0.0.1:5173";let cookie="";
 async function request(route,body,mode="live"){
  const res=await fetch(base+"/api/buddy/"+route+(route.includes("?")?"&":"?")+"mode="+mode,{method:body===undefined?"GET":"POST",headers:{...(cookie?{Cookie:cookie}:{}),...(body===undefined?{}:{"Content-Type":"application/json","X-Buddy-Client":"workbench"})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(180000)});
@@ -9,7 +8,7 @@ async function request(route,body,mode="live"){
  if(!res.ok){const code=String(result?.error?.code??"UNKNOWN").replace(/[^A-Z_]/g,"").slice(0,60);throw new Error("API_"+res.status+"_"+code)}return result;
 }
 const directory=path.resolve(".cache/live-research");await fs.mkdir(directory,{recursive:true});
-await request("bootstrap",undefined,"demo");await request("session",{accessCode:config.RESEARCH_ACCESS_CODE},"demo");
+await request("bootstrap",undefined,"demo");await request("session",{mode:"live"},"demo");
 const id=crypto.randomUUID(),symbols=["600519.SH"];
 let view=await request("runs",{requestId:id,goal:"研究600519.SH的年度盈利质量、经营现金流与估值口径，查询公司资料及相关公告，列出需要进一步验证的问题。",symbols,scenario:"normal"});
 const started=Date.now();let attempts=0;let pauses=0;

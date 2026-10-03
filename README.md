@@ -1,94 +1,68 @@
 # 投资 X Buddy
-一个面向投资研究者的个人 Agent 工作台：从研究目标出发，经计划确认、金融工具取数、证据校验，交付可复核报告，并保存检查点与显式记忆。
 
-**当前交付状态以 [docs/STATUS.md](docs/STATUS.md) 为准。** 在线体验：[https://investment-x-buddy-lab.golden-robin-3691.chatgpt.site](https://investment-x-buddy-lab.golden-robin-3691.chatgpt.site)。源码：[https://github.com/YMLLBC/investment-x-buddy](https://github.com/YMLLBC/investment-x-buddy)。仓库中的构造演示数据可公开，真实供应商样本、访问码和 API 密钥不在源码或提交包中。
+**我提交的投资研究 Agent 工作台作品。**
 
-## 产品选择
-- **公开演示**：三家 A 股公司的人为构造数据，真实运行状态机、数据库、审批和报告校验；不调用金融或模型接口。支持正常、现金流缺失、接口失败三种场景。
-- **真实研究**：个人访问码保护。DeepSeek 规划和证据约束解读；扶摇获取金融字段，iFinD MCP 提供公司资料、公告和新闻。执行只读工具前由用户确认计划。
-- **有据可查**：事实绑定原字段、数值和单位；计算由代码完成，模型文字仅是推断或未知。证据保留来源、数据时点、获取时点、口径、原始 JSON 和 SHA-256。
-- **可暂停与继续**：D1 是研究状态的权威来源。版本 CAS 和租约防止多窗口重复执行与停止后迟到覆盖。关闭页面后不会持续调度；再次打开恢复保存的检查点。
-- **长期记忆**：用户检查文本并明确确认后才写入。新研究快照继承当时的显式记忆；删除不改写历史快照。
+我围绕“投资研究者给出一个目标，Agent 能把研究推进到可复核成果”这道题，设计并实现了这个项目：研究者提出问题、检查执行计划、确认取数，再查看财务对比、原始证据和研究报告。系统保留进度和长期记忆，遇到数据缺失、接口故障或预算耗尽时明确暂停。
 
-## 技术与运行机制
-React / TypeScript / Vinext / Vite / Cloudflare Workers / D1 / Drizzle。服务端调用外部 API，浏览器只访问本站 API；完整密钥不进入客户端。
+这份README写给评审本作品的面试官。我建议先体验在线演示，再查看执行机制和验证记录，无需先安装项目。
 
-```mermaid
-flowchart LR
-  G[研究目标] --> P[模型规划 / 演示计划]
-  P --> A{用户确认}
-  A -->|拒绝| S[停止并保留线程]
-  A -->|批准| H[有界 Harness]
-  H --> T[登记的只读金融工具]
-  T --> E[原始证据与口径]
-  E --> V[代码计算 / 模型推断 / 引用校验]
-  V --> R[可复核报告与导出]
-  H <--> D[(D1 检查点 / CAS / 租约)]
-  M[用户确认的长期记忆] --> P
-```
+[打开在线工作台](https://investment-x-buddy-lab.golden-robin-3691.chatgpt.site/) · [面试官操作指南](面试官操作指南.md) · [源码仓库](https://github.com/YMLLBC/investment-x-buddy)
 
-内核在 `lib/buddy/harness.ts`，保持纯状态转换；数据适配在 `providers.ts/data.ts`，模型适配在 `model.ts`，存储与会话在 `repository.ts/auth.ts`，编排和 API 在 `engine.ts/server.ts` 及 `app/api/buddy/[...path]/route.ts`。工作台在 `components/buddy`。
+## 如何体验我的作品
 
-默认最多 **24 次工具尝试、4 次模型调用、0.50 美元模型预算、15 分钟累计运行时间**。规划本身消耗模型调用与费用。金融调用 45 秒、模型 120 秒；瞬态错误最多 3 次总尝试，429 遵守重试间隔，鉴权和参数失败终止。恢复不重置计数、费用或起始时间。全站模型日预算默认 5 美元（UTC），请求前原子预留，实际用量结算；未知费用保留预留估算。金融工具计费以供应商账户为准。
+先保持右上角“演示 · 构造数据”。这个模式不依赖外部接口，不产生模型费用，能完整验证产品流程。
 
-上下文压缩保留目标、限制、用户记忆、证据 ID 和检查点；原始响应继续保存在 D1，摘要不替代证据。报告验证失败会明确暂停或失败，不返回正常成果。
+1. 保留默认研究目标与三家公司代码，点击“生成研究计划”。
+2. 检查18个只读步骤和右侧预算，点击“确认计划并开始”，观察进度、证据和检查点。
+3. 完成后查看“数据对比”和“研究成果”，核对事实、推断、待验证问题与局限。
+4. 点击证据编号查看原始JSON、来源、时间、单位与哈希，再“重新计算哈希”验证证据。
+5. 从“导出成果”下载Markdown或JSON；检查内容后“存入长期记忆”，再尝试“基于本次继续研究”。
 
-## 本地启动
-需要 Node.js 24（已验证 24.18.1）和 npm。Node 测试使用内置 `node:sqlite`；生产使用 D1。
-```powershell
-npm ci
-Copy-Item .env.example .dev.vars
-# 编辑 .dev.vars：填写私密配置，不提交到 Git
-npm run db:generate
-npm run build
-node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_brave_nicolaos.sql
-npm run dev
-```
-默认本地地址 `http://127.0.0.1:5173`。仅首次空数据库应用该迁移；不要在已有库重放。后续 schema 变更追加新迁移，已发布迁移不可改写。Windows 若 npm 命令包装器解析异常，用已安装 npm 的绝对 `npm-cli.js` 经 Node 执行相同脚本；本项目不修改系统安装或 ACL。
+演示数值是我构造的测试数据，页面和导出均明确标注，不是实际投资依据。详细操作见[面试官操作指南](面试官操作指南.md)。解压附件后也可以双击[开始阅读.html](开始阅读.html)直接阅读。
 
-将 `.env.example` 同时复制为 `.env.local` 可运行手动真实接口验证脚本；应用运行的私密变量来自 `.dev.vars` 或部署环境。即使仅运行演示也需要随机 `SESSION_SECRET`（至少 32 字符）和本地 DB。可用 `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` 本地生成。
+## 我希望您重点检查的能力
 
-## 环境变量
-| 变量 | 用途 |
-| --- | --- |
-| DEEPSEEK_API_KEY | DeepSeek 私密密钥 |
-| DEEPSEEK_BASE_URL / DEEPSEEK_MODEL | 已验证 `https://api.deepseek.com` / `deepseek-flash` |
-| DEEPSEEK_REASONING_EFFORT | 默认为 high |
-| FUYAO_API_KEY | 扶摇 X-api-key |
-| IFIND_API_KEY | iFinD MCP Authorization，原始 token，无 Bearer 前缀 |
-| IFIND_MCP_BASE_URL | 已验证 HTTPS 固定服务器地址，见 example |
-| RESEARCH_ACCESS_CODE | 个人真实研究访问码，不放在 URL 或源码 |
-| SESSION_SECRET | 随机 HMAC 会话签名 secret，至少 32 字符 |
-| MODEL_INPUT_USD_PER_MILLION / MODEL_CACHED_INPUT_USD_PER_MILLION / MODEL_OUTPUT_USD_PER_MILLION | 保守估价；不低于已验证 peak 0.3 / 0.006 / 1.2 |
-| RUN_BUDGET_USD / DAILY_MODEL_BUDGET_USD | 只能收紧单研究 0.5 / 全站每日 5 美元上限 |
+- **执行前可检查、可拒绝。** Agent先提出计划，确认后才调用金融工具；停止后保留终态，迟到结果不能继续写入。
+- **结果可以追溯。** 数字事实绑定原字段、数值与单位；计算由代码完成，模型文字作为推断。证据保留来源、时间、口径、原始响应与SHA-256。
+- **失败可以解释和恢复。** 缺失数据、工具故障、错误引用和预算耗尽有明确状态；恢复不重复已完成步骤，不重置费用与次数。
+- **研究状态可以保留。** 刷新恢复数据库中的线程与检查点；长期记忆必须检查并确认，后续研究继承当时的记忆快照。
 
-`DB` 为 D1 绑定，不是普通字符串变量。托管部署将真实值设为 secrets；`.env*`、`.dev.vars*`、`private-records` 和 `.cache` 全部排除 Git 和提交包。
+点击“新建研究”，展开“研究边界与演示场景”，选择现金流缺失、接口失败，或把工具预算改为1，即可验证异常处理。具体预期见操作指南。
 
-## 数据来源与口径
-[扶摇文档](https://fuyao.aicubes.cn/docs/)：[证券检索、行情快照、前复权日线、年度财务、估值、交易日历]；[iFinD MCP](https://mcp.51ifind.com/)：登记公司信息、公告、新闻；[DeepSeek Responses](https://api-docs.deepseek.com/guides/responses_api)：规划与解读。以实际发现和调用结果为准。
+## 真实研究如何进入
 
-财务使用共同完整年度、CNY 元、合并净利润口径；最新共同年缺字段时明确说明回退，完全不完整则保留 null 与未知。财年和境内年末日期校验， unsafe 数值不得计算，派生值非有限则未知。请求最近 3 年不保证返回 3 年，短覆盖明确披露。估值仅有快照响应时点，不能冒充独立交易时点。iFinD 文本尚未统一核验每条原文日期，不作为已核验的数值事实。
+我已取消访问码。在右上角直接选择“真实研究 · 金融接口”，无需注册或登录。建议先研究600519.SH的年度盈利质量、现金流与估值，再生成、确认并执行计划。
 
-## 验证
-```powershell
-npm test
-npm run typecheck
-npm run lint
-npm run build
-$env:PLAYWRIGHT_BROWSERS_PATH=(Join-Path (Get-Location) '.cache/playwright')
-node node_modules/playwright/cli.js install chromium
-npm run dev
-# 在另一终端运行
-npm run test:e2e
-```
-自动测试使用构造数据与内存 SQLite，不需要真实密钥，不伪造真实接口验收结果。外部真实验证需私密配置，脚本 `scripts/verify-live.mjs`、`scripts/probe-model.mjs`、`scripts/probe-review.mjs` 和 `scripts/verify-research.mjs` 会产生实际 API 用量；不要纳入默认 CI。真实结果写入忽略的私密缓存，公开文档只记录数量、状态、口径、错误及费用估算。
+真实模式使用DeepSeek规划与解读、扶摇金融数据、iFinD MCP公司资料与公告新闻。密钥只在服务端保存，浏览器通过本站API访问自己的记录。
 
-精确命令、预期、实际与失败修正见 [VALIDATION](docs/VALIDATION.md)、[测试说明](docs/TESTING.md)、[阶段报告](docs/STAGES.md)；源码最终发布前执行 `node scripts/check-secrets.mjs`，需本地真实私密值作为扫描候选，不输出候选本身。
+每次研究最多24次工具尝试、4次模型调用、0.50美元模型预算和15分钟累计运行时间；全站每日模型预算为5美元，公开访客共享。供应商配额和网络可能影响真实研究，演示仍可体验。关闭页面后不会继续调度。
 
-## AI 的角色与已知边界
-Codex 参与设计、实现、测试、独立审查、修正和文档；DeepSeek 是产品内的规划/推断模块，不是数字事实来源。完整记录见 [AI_USAGE](docs/AI_USAGE.md)。不会保存或展示隐藏推理，只显示工具步骤、执行摘要和用量。
+## 我如何实现 Agent Harness
 
-这是访问码保护的个人原型：同浏览器签名会话保持身份，7 天到期；不是跨设备 OAuth 账户系统。无持仓、交易、支付、推送或持续后台任务。未完成正式披露的独立二次交叉核验，也不承诺所有金融数据权限长期可用。无确定涨跌、收益承诺或直接买卖建议。WebMCP 支持浏览器提供注册能力时的“读取状态”和“准备目标”，不绕过用户计划审批。
+我把界面与执行内核分开：界面负责目标、审批、进度与成果；内核负责有界状态转换；服务负责持久化、会话、工具与模型调用。
 
-## 项目记录
-[总体状态](docs/STATUS.md) · [实施计划](docs/IMPLEMENTATION_PLAN.md) · [关键接口](docs/DATA_AND_INTERFACES.md) · [AI记录](docs/AI_USAGE.md) · [验证记录](docs/VALIDATION.md) · [分阶段记录](docs/STAGES.md)。原题附件保留不改动。
+研究按“目标 → 计划 → 确认 → 只读工具 → 证据校验 → 报告 → 显式记忆”推进。工具只允许登记的名称和参数。数据库版本检查与租约约束并发，防止多窗口重复调用及停止后覆盖。上下文整理保留目标、证据编号和检查点，原始响应另行保存。
+
+我使用React、TypeScript、Cloudflare Workers与D1实现网站。核心代码可以从以下文件开始阅读：
+
+- [harness.ts](lib/buddy/harness.ts)：审批、执行、暂停、恢复、停止与预算状态转换。
+- [engine.ts](lib/buddy/engine.ts)、[repository.ts](lib/buddy/repository.ts)：调度、检查点、费用预留和持久化。
+- [providers.ts](lib/buddy/providers.ts)、[model.ts](lib/buddy/model.ts)：金融工具与模型结构化输出。
+- [data.ts](lib/buddy/data.ts)、[report.ts](lib/buddy/report.ts)：财务口径、确定计算、引用与报告校验。
+- [workbench.tsx](components/buddy/workbench.tsx)：研究工作台交互。
+
+## 我的验证结果和边界
+
+本次修订通过114项单元测试、7项浏览器回归、类型检查与代码检查。浏览器覆盖完整报告、哈希、导出、记忆、缺失数据、故障恢复、停止、预算限制、手机布局、免访问码切换和过期会话重建。构建与发布结果见[验证记录](docs/VALIDATION.md)。
+
+此前生产演示实际完成18步、保存18条证据并通过报告校验。真实规划、单份复核及9步真实取数也有实测。完整真实报告曾因模型输出列表超限而暂停；我已统一schema与解析器上限，并加入回归测试。**修复后的完整真实报告仍需再次验收，我没有将它写成全部通过。**
+
+这是研究工作台原型，未连接交易或支付，也不是跨设备账户系统。同浏览器签名会话有效期7天；清除Cookie或到期后进入新空间。金融数据仍需与原始披露交叉核验。
+
+## 附件与开发资料
+
+我使用Codex辅助设计、实现、测试和审查，过程保留在[AI使用说明](docs/AI_USAGE.md)。DeepSeek是产品内的规划与推断模块，不是数字事实来源。
+
+附件包含源码、操作指南、实施拆分、接口说明、测试与阶段审查，不包含实际密钥、供应商私密样本、依赖或缓存。
+
+本地安装、环境变量与验证命令见[技术与本地运行说明](docs/TECHNICAL_REFERENCE.md)。任务拆分见[实施计划](docs/IMPLEMENTATION_PLAN.md)，过程见[阶段记录](docs/STAGES.md)，最新状态见[交付记录](docs/STATUS.md)。
