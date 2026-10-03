@@ -1,0 +1,37 @@
+{
+  "constructed": true,
+  "version": "demo-v1",
+  "notice": "全部数值为人为构造，仅用于研究工作流演示，非真实市场或财务数据。",
+  "companies": [
+    {
+      "symbol": "600519.SH",
+      "name": "贵州茅台",
+      "revenue": 200000000000,
+      "netProfit": 96000000000,
+      "cashflow": 108000000000,
+      "price": 1500,
+      "pe": 24,
+      "pb": 8.4
+    },
+    {
+      "symbol": "000858.SZ",
+      "name": "五粮液",
+      "revenue": 110000000000,
+      "netProfit": 35000000000,
+      "cashflow": 32500000000,
+      "price": 128,
+      "pe": 18,
+      "pb": 4.2
+    },
+    {
+      "symbol": "000568.SZ",
+      "name": "泸州老窖",
+      "revenue": 80000000000,
+      "netProfit": 24000000000,
+      "cashflow": 18500000000,
+      "price": 160,
+      "pe": 16,
+      "pb": 4.8
+    }
+  ]
+}

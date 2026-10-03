@@ -1,0 +1,884 @@
+diff --git a/cloudflare-env.d.ts b/cloudflare-env.d.ts
+index 856e090..97375cf 100644
+--- a/cloudflare-env.d.ts
++++ b/cloudflare-env.d.ts
+@@ -1,6 +1,20 @@
+ declare namespace Cloudflare {
+   interface Env {
+     DB?: D1Database;
+     BUCKET?: R2Bucket;
++    DEEPSEEK_API_KEY?: string;
++    DEEPSEEK_BASE_URL?: string;
++    DEEPSEEK_MODEL?: string;
++    DEEPSEEK_REASONING_EFFORT?: string;
++    FUYAO_API_KEY?: string;
++    IFIND_API_KEY?: string;
++    IFIND_MCP_BASE_URL?: string;
++    RESEARCH_ACCESS_CODE?: string;
++    SESSION_SECRET?: string;
++    MODEL_INPUT_USD_PER_MILLION?: string;
++    MODEL_CACHED_INPUT_USD_PER_MILLION?: string;
++    MODEL_OUTPUT_USD_PER_MILLION?: string;
++    RUN_BUDGET_USD?: string;
++    DAILY_MODEL_BUDGET_USD?: string;
+   }
+ }
+diff --git a/db/schema.ts b/db/schema.ts
+index d2dd83c..b8028ef 100644
+--- a/db/schema.ts
++++ b/db/schema.ts
+@@ -1,4 +1,24 @@
+-// Intentionally empty by default.
+-// Add Drizzle tables here when the site actually needs a database.
+-// See examples/d1/db/schema.ts for an opt-in example.
+-export {};
++import { index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
++
++export const buddyRuns = sqliteTable("buddy_runs", {
++  id: text("id").primaryKey(), ownerId: text("owner_id").notNull(), mode: text("mode").notNull(),
++  version: integer("version").notNull(), updatedAt: text("updated_at").notNull(), runJson: text("run_json").notNull(),
++  symbols: text("symbols").notNull(), scenario: text("scenario").notNull(), planning: integer("planning").notNull(),
++  reviewAttempts: integer("review_attempts").notNull(), retryAt: integer("retry_at").notNull(),
++  leaseId: text("lease_id"), leaseUntil: integer("lease_until").notNull().default(0),
++}, table => [index("buddy_runs_owner_mode_updated").on(table.ownerId, table.mode, table.updatedAt)]);
++export const buddyEvidence = sqliteTable("buddy_evidence", {
++  runId: text("run_id").notNull().references(() => buddyRuns.id, { onDelete: "cascade" }),
++  id: text("id").notNull(), evidenceJson: text("evidence_json").notNull(), hash: text("hash").notNull(),
++}, table => [primaryKey({ columns: [table.runId, table.id] })]);
++export const buddyMemory = sqliteTable("buddy_memory", {
++  id: text("id").primaryKey(), ownerId: text("owner_id").notNull(), mode: text("mode").notNull(),
++  text: text("text").notNull(), kind: text("kind").notNull(), createdAt: text("created_at").notNull(),
++}, table => [index("buddy_memory_owner_mode_created").on(table.ownerId, table.mode, table.createdAt)]);
++export const buddyModelReservations = sqliteTable("buddy_model_reservations", {
++  token: text("token").primaryKey(), day: text("day").notNull(), amount: real("amount").notNull(),
++  actual: real("actual"), status: text("status").notNull(), ownerId: text("owner_id").notNull(), runId: text("run_id").notNull(),
++}, table => [index("buddy_reservations_day").on(table.day)]);
++export const buddyRateLimits = sqliteTable("buddy_rate_limits", {
++  key: text("key").primaryKey(), windowStart: integer("window_start").notNull(), windowMs: integer("window_ms").notNull(), count: integer("count").notNull(),
++});
+diff --git a/drizzle/0000_brave_nicolaos.sql b/drizzle/0000_brave_nicolaos.sql
+new file mode 100644
+index 0000000..07b6c43
+--- /dev/null
++++ b/drizzle/0000_brave_nicolaos.sql
+@@ -0,0 +1,54 @@
++CREATE TABLE `buddy_evidence` (
++	`run_id` text NOT NULL,
++	`id` text NOT NULL,
++	`evidence_json` text NOT NULL,
++	`hash` text NOT NULL,
++	PRIMARY KEY(`run_id`, `id`),
++	FOREIGN KEY (`run_id`) REFERENCES `buddy_runs`(`id`) ON UPDATE no action ON DELETE cascade
++);
++--> statement-breakpoint
++CREATE TABLE `buddy_memory` (
++	`id` text PRIMARY KEY NOT NULL,
++	`owner_id` text NOT NULL,
++	`mode` text NOT NULL,
++	`text` text NOT NULL,
++	`kind` text NOT NULL,
++	`created_at` text NOT NULL
++);
++--> statement-breakpoint
++CREATE INDEX `buddy_memory_owner_mode_created` ON `buddy_memory` (`owner_id`,`mode`,`created_at`);--> statement-breakpoint
++CREATE TABLE `buddy_model_reservations` (
++	`token` text PRIMARY KEY NOT NULL,
++	`day` text NOT NULL,
++	`amount` real NOT NULL,
++	`actual` real,
++	`status` text NOT NULL,
++	`owner_id` text NOT NULL,
++	`run_id` text NOT NULL
++);
++--> statement-breakpoint
++CREATE INDEX `buddy_reservations_day` ON `buddy_model_reservations` (`day`);--> statement-breakpoint
++CREATE TABLE `buddy_rate_limits` (
++	`key` text PRIMARY KEY NOT NULL,
++	`window_start` integer NOT NULL,
++	`window_ms` integer NOT NULL,
++	`count` integer NOT NULL
++);
++--> statement-breakpoint
++CREATE TABLE `buddy_runs` (
++	`id` text PRIMARY KEY NOT NULL,
++	`owner_id` text NOT NULL,
++	`mode` text NOT NULL,
++	`version` integer NOT NULL,
++	`updated_at` text NOT NULL,
++	`run_json` text NOT NULL,
++	`symbols` text NOT NULL,
++	`scenario` text NOT NULL,
++	`planning` integer NOT NULL,
++	`review_attempts` integer NOT NULL,
++	`retry_at` integer NOT NULL,
++	`lease_id` text,
++	`lease_until` integer DEFAULT 0 NOT NULL
++);
++--> statement-breakpoint
++CREATE INDEX `buddy_runs_owner_mode_updated` ON `buddy_runs` (`owner_id`,`mode`,`updated_at`);
+\ No newline at end of file
+diff --git a/drizzle/meta/0000_snapshot.json b/drizzle/meta/0000_snapshot.json
+new file mode 100644
+index 0000000..1416a7c
+--- /dev/null
++++ b/drizzle/meta/0000_snapshot.json
+@@ -0,0 +1,357 @@
++{
++  "version": "6",
++  "dialect": "sqlite",
++  "id": "b1384bb7-7bd1-4150-a99b-3c06f2b3b6f5",
++  "prevId": "00000000-0000-0000-0000-000000000000",
++  "tables": {
++    "buddy_evidence": {
++      "name": "buddy_evidence",
++      "columns": {
++        "run_id": {
++          "name": "run_id",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "id": {
++          "name": "id",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "evidence_json": {
++          "name": "evidence_json",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "hash": {
++          "name": "hash",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        }
++      },
++      "indexes": {},
++      "foreignKeys": {
++        "buddy_evidence_run_id_buddy_runs_id_fk": {
++          "name": "buddy_evidence_run_id_buddy_runs_id_fk",
++          "tableFrom": "buddy_evidence",
++          "tableTo": "buddy_runs",
++          "columnsFrom": [
++            "run_id"
++          ],
++          "columnsTo": [
++            "id"
++          ],
++          "onDelete": "cascade",
++          "onUpdate": "no action"
++        }
++      },
++      "compositePrimaryKeys": {
++        "buddy_evidence_run_id_id_pk": {
++          "columns": [
++            "run_id",
++            "id"
++          ],
++          "name": "buddy_evidence_run_id_id_pk"
++        }
++      },
++      "uniqueConstraints": {},
++      "checkConstraints": {}
++    },
++    "buddy_memory": {
++      "name": "buddy_memory",
++      "columns": {
++        "id": {
++          "name": "id",
++          "type": "text",
++          "primaryKey": true,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "owner_id": {
++          "name": "owner_id",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "mode": {
++          "name": "mode",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "text": {
++          "name": "text",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "kind": {
++          "name": "kind",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "created_at": {
++          "name": "created_at",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        }
++      },
++      "indexes": {
++        "buddy_memory_owner_mode_created": {
++          "name": "buddy_memory_owner_mode_created",
++          "columns": [
++            "owner_id",
++            "mode",
++            "created_at"
++          ],
++          "isUnique": false
++        }
++      },
++      "foreignKeys": {},
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {},
++      "checkConstraints": {}
++    },
++    "buddy_model_reservations": {
++      "name": "buddy_model_reservations",
++      "columns": {
++        "token": {
++          "name": "token",
++          "type": "text",
++          "primaryKey": true,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "day": {
++          "name": "day",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "amount": {
++          "name": "amount",
++          "type": "real",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "actual": {
++          "name": "actual",
++          "type": "real",
++          "primaryKey": false,
++          "notNull": false,
++          "autoincrement": false
++        },
++        "status": {
++          "name": "status",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "owner_id": {
++          "name": "owner_id",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "run_id": {
++          "name": "run_id",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        }
++      },
++      "indexes": {
++        "buddy_reservations_day": {
++          "name": "buddy_reservations_day",
++          "columns": [
++            "day"
++          ],
++          "isUnique": false
++        }
++      },
++      "foreignKeys": {},
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {},
++      "checkConstraints": {}
++    },
++    "buddy_rate_limits": {
++      "name": "buddy_rate_limits",
++      "columns": {
++        "key": {
++          "name": "key",
++          "type": "text",
++          "primaryKey": true,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "window_start": {
++          "name": "window_start",
++          "type": "integer",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "window_ms": {
++          "name": "window_ms",
++          "type": "integer",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "count": {
++          "name": "count",
++          "type": "integer",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        }
++      },
++      "indexes": {},
++      "foreignKeys": {},
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {},
++      "checkConstraints": {}
++    },
++    "buddy_runs": {
++      "name": "buddy_runs",
++      "columns": {
++        "id": {
++          "name": "id",
++          "type": "text",
++          "primaryKey": true,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "owner_id": {
++          "name": "owner_id",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "mode": {
++          "name": "mode",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "version": {
++          "name": "version",
++          "type": "integer",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "updated_at": {
++          "name": "updated_at",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "run_json": {
++          "name": "run_json",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "symbols": {
++          "name": "symbols",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "scenario": {
++          "name": "scenario",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "planning": {
++          "name": "planning",
++          "type": "integer",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "review_attempts": {
++          "name": "review_attempts",
++          "type": "integer",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "retry_at": {
++          "name": "retry_at",
++          "type": "integer",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false
++        },
++        "lease_id": {
++          "name": "lease_id",
++          "type": "text",
++          "primaryKey": false,
++          "notNull": false,
++          "autoincrement": false
++        },
++        "lease_until": {
++          "name": "lease_until",
++          "type": "integer",
++          "primaryKey": false,
++          "notNull": true,
++          "autoincrement": false,
++          "default": 0
++        }
++      },
++      "indexes": {
++        "buddy_runs_owner_mode_updated": {
++          "name": "buddy_runs_owner_mode_updated",
++          "columns": [
++            "owner_id",
++            "mode",
++            "updated_at"
++          ],
++          "isUnique": false
++        }
++      },
++      "foreignKeys": {},
++      "compositePrimaryKeys": {},
++      "uniqueConstraints": {},
++      "checkConstraints": {}
++    }
++  },
++  "views": {},
++  "enums": {},
++  "_meta": {
++    "schemas": {},
++    "tables": {},
++    "columns": {}
++  },
++  "internal": {
++    "indexes": {}
++  }
++}
+\ No newline at end of file
+diff --git a/drizzle/meta/_journal.json b/drizzle/meta/_journal.json
+index 4377507..6224b55 100644
+--- a/drizzle/meta/_journal.json
++++ b/drizzle/meta/_journal.json
+@@ -1,5 +1,13 @@
+ {
+   "version": "7",
+   "dialect": "sqlite",
+-  "entries": []
+-}
++  "entries": [
++    {
++      "idx": 0,
++      "version": "6",
++      "when": 1790942158974,
++      "tag": "0000_brave_nicolaos",
++      "breakpoints": true
++    }
++  ]
++}
+\ No newline at end of file
+diff --git a/lib/buddy/auth.ts b/lib/buddy/auth.ts
+new file mode 100644
+index 0000000..7d05977
+--- /dev/null
++++ b/lib/buddy/auth.ts
+@@ -0,0 +1,68 @@
++import type { RunMode, Session } from "./types.ts";
++
++const TTL = 604800000;
++const encoder = new TextEncoder();
++const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
++function base64url(bytes: Uint8Array): string {
++  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
++}
++function decode(value: string): Uint8Array<ArrayBuffer> {
++  if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error("Invalid token");
++  const bytes = Uint8Array.from(atob(value.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
++  if (base64url(bytes) !== value) throw new Error("Invalid token");
++  return bytes;
++}
++async function key(secret: string) {
++  if (typeof secret !== "string" || secret.length < 32) throw new Error("Invalid session secret");
++  return crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
++}
++function validSession(value: unknown): value is Session {
++  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
++  const s = value as Session;
++  return Object.keys(s).length === 3 && typeof s.ownerId === "string" && UUID.test(s.ownerId) && (s.mode === "demo" || s.mode === "live") && Number.isSafeInteger(s.expiresAt);
++}
++export function newSession(mode: RunMode, now: number): Session {
++  if ((mode !== "demo" && mode !== "live") || !Number.isSafeInteger(now)) throw new Error("Invalid session input");
++  return { ownerId: crypto.randomUUID(), mode, expiresAt: now + TTL };
++}
++export async function signSession(session: Session, secret: string): Promise<string> {
++  if (!validSession(session)) throw new Error("Invalid session");
++  const payload = base64url(encoder.encode(JSON.stringify(session)));
++  if (payload.length > 1024) throw new Error("Session payload too large");
++  const signature = await crypto.subtle.sign("HMAC", await key(secret), encoder.encode(payload));
++  return `${payload}.${base64url(new Uint8Array(signature))}`;
++}
++export async function verifySession(token: string, secret: string, now: number): Promise<Session | null> {
++  try {
++    if (typeof token !== "string" || token.length > 1068 || !Number.isSafeInteger(now)) return null;
++    const parts = token.split(".");
++    if (parts.length !== 2 || parts[0].length > 1024 || parts[1].length !== 43) return null;
++    if (!await crypto.subtle.verify("HMAC", await key(secret), decode(parts[1]), encoder.encode(parts[0]))) return null;
++    const session: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(decode(parts[0])));
++    if (!validSession(session) || session.expiresAt <= now || session.expiresAt - now > TTL) return null;
++    return session;
++  } catch { return null; }
++}
++export async function checkAccessCode(supplied: string, expected: string): Promise<boolean> {
++  if (typeof supplied !== "string" || typeof expected !== "string" || supplied.length < 1 || supplied.length > 128 || expected.length < 1 || expected.length > 128) return false;
++  const hmac = await crypto.subtle.importKey("raw", encoder.encode(expected), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
++  const expectedDigest = await crypto.subtle.sign("HMAC", hmac, encoder.encode(expected));
++  return crypto.subtle.verify("HMAC", hmac, expectedDigest, encoder.encode(supplied));
++}
++export function sessionCookie(token: string, url: string): string {
++  if (!/^[A-Za-z0-9_.-]+$/.test(token) || token.length > 1068) throw new Error("Invalid cookie token");
++  return `buddy_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800${new URL(url).protocol === "https:" ? "; Secure" : ""}`;
++}
++export function readSessionCookie(request: Request): string | null {
++  const header = request.headers.get("cookie");
++  if (!header || header.length > 16384) return null;
++  let token: string | null = null;
++  for (const part of header.split(";")) {
++    const separator = part.indexOf("=");
++    if (separator < 0 || part.slice(0, separator).trim() !== "buddy_session") continue;
++    const value = part.slice(separator + 1).trim();
++    if (!value || value.length > 1068 || !/^[A-Za-z0-9_.-]+$/.test(value) || (token !== null && token !== value)) return null;
++    token = value;
++  }
++  return token;
++}
+diff --git a/lib/buddy/repository.ts b/lib/buddy/repository.ts
+new file mode 100644
+index 0000000..f359001
+--- /dev/null
++++ b/lib/buddy/repository.ts
+@@ -0,0 +1,119 @@
++import type { AgentRun, Evidence, MemoryEntry, RunMode } from "./types.ts";
++
++export interface BuddyResult { meta: { changes: number }; }
++export interface BuddyStatement {
++  bind(...values: (string | number | null)[]): BuddyStatement;
++  first<T>(): Promise<T | null>;
++  all<T>(): Promise<{ results: T[] }>;
++  run(): Promise<BuddyResult>;
++}
++export interface BuddyDatabase {
++  prepare(sql: string): BuddyStatement;
++  batch(statements: BuddyStatement[]): Promise<BuddyResult[]>;
++}
++export interface RunRecord {
++  run: AgentRun; symbols: string[]; scenario: "normal" | "missing" | "failure";
++  planning: boolean; reviewAttempts: number; retryAt: number; leaseId: string | null; leaseUntil: number;
++}
++export type RunSummary = Pick<AgentRun, "id" | "title" | "goal" | "mode" | "status" | "createdAt" | "updatedAt" | "metrics" | "version"> & { symbols: string[]; planning: boolean };
++interface RunRow { id: string; owner_id: string; mode: RunMode; version: number; run_json: string; symbols: string; scenario: RunRecord["scenario"]; planning: number; review_attempts: number; retry_at: number; lease_id: string | null; lease_until: number; }
++type Value = string | number | null;
++const utf8 = new TextEncoder();
++function modeCheck(mode: RunMode) { if (mode !== "demo" && mode !== "live") throw new Error("Invalid mode"); }
++function bounded(values: unknown) { if (utf8.encode(JSON.stringify(values)).length > 900000) throw new Error("Database row exceeds 900000 UTF-8 bytes"); }
++function finiteNonnegative(n: number) { if (!Number.isFinite(n) || n < 0) throw new Error("Expected finite nonnegative number"); }
++function dayCheck(day: string) { if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(Date.parse(day)) || new Date(day).toISOString().slice(0, 10) !== day) throw new Error("Invalid UTC budget day"); }
++// Stable serialization makes a repeated evidence object independent of property insertion order.
++function canonical(value: unknown): string {
++  return JSON.stringify(value, (_key, current) => current && typeof current === "object" && !Array.isArray(current)
++    ? Object.fromEntries(Object.keys(current).sort().map(key => [key, current[key]])) : current);
++}
++function serialize(record: RunRecord) {
++  const r = record.run; modeCheck(r.mode);
++  if (!r.id || !r.ownerId || !Number.isSafeInteger(r.version) || r.version < 0 || r.evidence.length > 25 || new Set(r.evidence.map(e => e.id)).size !== r.evidence.length) throw new Error("Invalid run or evidence bounds");
++  const evidence = r.evidence.map(e => {
++    if (!e.id || typeof e.hash !== "string") throw new Error("Invalid evidence identity");
++    const json = canonical(e); bounded([r.id, e.id, json, e.hash]); return { id: e.id, hash: e.hash, json };
++  });
++  const json = JSON.stringify({ ...r, evidence: r.evidence.map(e => ({ ...e, raw: null })) });
++  const values: Value[] = [r.id, r.ownerId, r.mode, r.version, r.updatedAt, json, JSON.stringify(record.symbols), record.scenario, Number(record.planning), record.reviewAttempts, record.retryAt, record.leaseId, record.leaseUntil];
++  bounded(values); return { json, values, evidence };
++}
++export class BuddyRepository {
++  private db: BuddyDatabase;
++  constructor(db: BuddyDatabase) { this.db = db; }
++  private query(sql: string, ...values: Value[]) { return this.db.prepare(sql).bind(...values); }
++  private async hydrate(row: RunRow): Promise<RunRecord> {
++    const run = JSON.parse(row.run_json) as AgentRun;
++    const result = await this.query("SELECT e.evidence_json FROM buddy_evidence e JOIN buddy_runs r ON r.id=e.run_id WHERE r.id=? AND r.owner_id=? AND r.mode=?", row.id, row.owner_id, row.mode).all<{ evidence_json: string }>();
++    const evidence = new Map(result.results.map(e => { const value = JSON.parse(e.evidence_json) as Evidence; return [value.id, value]; }));
++    run.evidence = run.evidence.map(e => { const full = evidence.get(e.id); if (!full) throw new Error("Missing stored evidence"); return full; });
++    return { run, symbols: JSON.parse(row.symbols), scenario: row.scenario, planning: Boolean(row.planning), reviewAttempts: row.review_attempts, retryAt: row.retry_at, leaseId: row.lease_id, leaseUntil: row.lease_until };
++  }
++  async insert(record: RunRecord): Promise<void> {
++    const data = serialize(record);
++    const statements = [this.query("INSERT INTO buddy_runs (id,owner_id,mode,version,updated_at,run_json,symbols,scenario,planning,review_attempts,retry_at,lease_id,lease_until) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", ...data.values)];
++    for (const e of data.evidence) statements.push(this.query("INSERT INTO buddy_evidence (run_id,id,evidence_json,hash) VALUES (?,?,?,?)", record.run.id, e.id, e.json, e.hash));
++    await this.db.batch(statements);
++  }
++  async get(id: string, ownerId: string, mode: RunMode): Promise<RunRecord | null> {
++    const row = await this.query("SELECT * FROM buddy_runs WHERE id=? AND owner_id=? AND mode=?", id, ownerId, mode).first<RunRow>();
++    return row ? this.hydrate(row) : null;
++  }
++  async list(ownerId: string, mode: RunMode): Promise<RunSummary[]> {
++    const rows = await this.query("SELECT run_json,symbols,planning FROM buddy_runs WHERE owner_id=? AND mode=? ORDER BY updated_at DESC,id DESC LIMIT 30", ownerId, mode).all<Pick<RunRow, "run_json" | "symbols" | "planning">>();
++    return rows.results.map(row => { const { id, title, goal, mode, status, createdAt, updatedAt, metrics, version } = JSON.parse(row.run_json) as AgentRun; return { id, title, goal, mode, status, createdAt, updatedAt, metrics, version, symbols: JSON.parse(row.symbols), planning: Boolean(row.planning) }; });
++  }
++  async save(record: RunRecord, expectedVersion: number, leaseId?: string): Promise<boolean> {
++    if (!Number.isSafeInteger(expectedVersion) || record.run.version <= expectedVersion) throw new Error("Version must advance");
++    const data = serialize(record); const r = record.run;
++    const predicate = "id=? AND owner_id=? AND mode=? AND version=?" + (leaseId !== undefined ? " AND lease_id=?" : "");
++    const condition: Value[] = [r.id, r.ownerId, r.mode, expectedVersion, ...(leaseId !== undefined ? [leaseId] : [])];
++    // A collision with different contents deliberately violates NOT NULL and rolls back this whole batch.
++    const statements = data.evidence.map(e => this.query(`INSERT INTO buddy_evidence (run_id,id,evidence_json,hash) SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM buddy_runs WHERE ${predicate}) ON CONFLICT(run_id,id) DO UPDATE SET evidence_json=CASE WHEN buddy_evidence.evidence_json=excluded.evidence_json AND buddy_evidence.hash=excluded.hash THEN buddy_evidence.evidence_json ELSE NULL END`, r.id, e.id, e.json, e.hash, ...condition));
++    statements.push(this.query(`UPDATE buddy_runs SET version=?,updated_at=?,run_json=?,symbols=?,scenario=?,planning=?,review_attempts=?,retry_at=?${leaseId === undefined ? ",lease_id=NULL,lease_until=0" : ""} WHERE ${predicate}`, r.version, r.updatedAt, data.json, JSON.stringify(record.symbols), record.scenario, Number(record.planning), record.reviewAttempts, record.retryAt, ...condition));
++    const result = await this.db.batch(statements); return result[result.length - 1].meta.changes === 1;
++  }
++  async acquire(id: string, ownerId: string, mode: RunMode, now: number, leaseMs = 180000): Promise<{ record: RunRecord; leaseId: string } | null> {
++    if (!Number.isSafeInteger(now) || !Number.isSafeInteger(leaseMs) || leaseMs <= 0 || leaseMs > 180000) throw new Error("Invalid lease duration");
++    const leaseId = crypto.randomUUID();
++    const row = await this.query("UPDATE buddy_runs SET lease_id=?,lease_until=? WHERE id=? AND owner_id=? AND mode=? AND (lease_id IS NULL OR lease_until<=?) RETURNING *", leaseId, now + leaseMs, id, ownerId, mode, now).first<RunRow>();
++    return row ? { record: await this.hydrate(row), leaseId } : null;
++  }
++  async release(id: string, ownerId: string, mode: RunMode, leaseId: string): Promise<boolean> {
++    return (await this.query("UPDATE buddy_runs SET lease_id=NULL,lease_until=0 WHERE id=? AND owner_id=? AND mode=? AND lease_id=?", id, ownerId, mode, leaseId).run()).meta.changes === 1;
++  }
++  async memories(ownerId: string, mode: RunMode): Promise<MemoryEntry[]> {
++    return (await this.query("SELECT id,text,kind,created_at AS createdAt FROM buddy_memory WHERE owner_id=? AND mode=? ORDER BY created_at DESC,id DESC LIMIT 50", ownerId, mode).all<MemoryEntry>()).results;
++  }
++  async addMemory(ownerId: string, mode: RunMode, entry: MemoryEntry): Promise<void> {
++    modeCheck(mode);
++    if (!entry.id || typeof entry.text !== "string" || entry.text.length > 2000 || !["preference", "research"].includes(entry.kind)) throw new Error("Invalid memory");
++    bounded([ownerId, mode, entry]);
++    const result = await this.query("INSERT INTO buddy_memory (id,owner_id,mode,text,kind,created_at) SELECT ?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM buddy_memory WHERE owner_id=? AND mode=?)<50", entry.id, ownerId, mode, entry.text, entry.kind, entry.createdAt, ownerId, mode).run();
++    if (result.meta.changes !== 1) throw new Error("Memory limit reached");
++  }
++  async deleteMemory(ownerId: string, mode: RunMode, id: string): Promise<boolean> {
++    return (await this.query("DELETE FROM buddy_memory WHERE id=? AND owner_id=? AND mode=?", id, ownerId, mode).run()).meta.changes === 1;
++  }
++  async reserveBudget(day: string, amount: number, cap: number, token: string, ownerId: string, runId: string): Promise<boolean> {
++    dayCheck(day); finiteNonnegative(amount); finiteNonnegative(cap);
++    bounded([day, amount, cap, token, ownerId, runId]);
++    const result = await this.query("INSERT INTO buddy_model_reservations (token,day,amount,actual,status,owner_id,run_id) SELECT ?,?,?,NULL,'pending',?,? WHERE COALESCE((SELECT SUM(CASE WHEN status='pending' THEN amount ELSE actual END) FROM buddy_model_reservations WHERE day=?),0)+?<=? ON CONFLICT(token) DO NOTHING", token, day, amount, ownerId, runId, day, amount, cap).run();
++    return result.meta.changes === 1;
++  }
++  async settleBudget(token: string, actual: number | null): Promise<boolean> {
++    if (actual !== null) finiteNonnegative(actual);
++    return (await this.query("UPDATE buddy_model_reservations SET actual=COALESCE(?,amount),status='settled' WHERE token=? AND status='pending'", actual, token).run()).meta.changes === 1;
++  }
++  async budget(day: string): Promise<{ spent: number; reserved: number }> {
++    dayCheck(day);
++    return (await this.query("SELECT COALESCE(SUM(CASE WHEN status='settled' THEN actual ELSE 0 END),0) AS spent,COALESCE(SUM(CASE WHEN status='pending' THEN amount ELSE 0 END),0) AS reserved FROM buddy_model_reservations WHERE day=?", day).first<{ spent: number; reserved: number }>())!;
++  }
++  async rateLimit(key: string, windowMs: number, max: number, now: number): Promise<boolean> {
++    if (!Number.isSafeInteger(windowMs) || windowMs <= 0 || !Number.isSafeInteger(max) || max < 1 || !Number.isSafeInteger(now)) throw new Error("Invalid rate limit");
++    bounded(key); const start = Math.floor(now / windowMs) * windowMs;
++    const result = await this.query("INSERT INTO buddy_rate_limits (key,window_start,window_ms,count) VALUES (?,?,?,1) ON CONFLICT(key) DO UPDATE SET window_start=excluded.window_start,window_ms=excluded.window_ms,count=CASE WHEN buddy_rate_limits.window_start=excluded.window_start AND buddy_rate_limits.window_ms=excluded.window_ms THEN buddy_rate_limits.count+1 ELSE 1 END WHERE buddy_rate_limits.window_start<>excluded.window_start OR buddy_rate_limits.window_ms<>excluded.window_ms OR buddy_rate_limits.count<?", key, start, windowMs, max).run();
++    return result.meta.changes === 1;
++  }
++}
+diff --git a/tests/auth.test.ts b/tests/auth.test.ts
+new file mode 100644
+index 0000000..042fc25
+--- /dev/null
++++ b/tests/auth.test.ts
+@@ -0,0 +1,40 @@
++import test from "node:test";
++import assert from "node:assert/strict";
++const auth = await import("../lib/buddy/auth.ts").catch(() => null);
++const secret = "secure-session-secret-at-least-32-characters";
++const now = 1_800_000_000_000;
++test("session authentication rejects forgery, expiry and invalid payloads", async () => {
++  assert.ok(auth, "session implementation must exist");
++  const session = auth.newSession("demo", now);
++  assert.equal(session.expiresAt, now + 604800000);
++  assert.notEqual(session.ownerId, auth.newSession("demo", now).ownerId);
++  const token = await auth.signSession(session, secret);
++  assert.deepEqual(await auth.verifySession(token, secret, now), session);
++  assert.equal(await auth.verifySession(token, secret, session.expiresAt), null);
++  assert.equal(await auth.verifySession(token, "x".repeat(32), now), null);
++  const [payload, signature] = token.split(".");
++  const tampered = Buffer.from(JSON.stringify({ ...session, mode: "live" })).toString("base64url");
++  assert.equal(await auth.verifySession(`${tampered}.${signature}`, secret, now), null);
++  assert.equal(await auth.verifySession(`${payload}.${"A".repeat(43)}`, secret, now), null);
++  for (const value of ["", ".", "a".repeat(2000), "a.b.c"]) assert.equal(await auth.verifySession(value, secret, now), null);
++  for (const bad of [{ ...session, ownerId: "oops" }, { ...session, mode: "admin" }, { ...session, expiresAt: now + 604800001 }]) {
++    const data = Buffer.from(JSON.stringify(bad)).toString("base64url");
++    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
++    const sig = Buffer.from(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data))).toString("base64url");
++    assert.equal(await auth.verifySession(`${data}.${sig}`, secret, now), null);
++  }
++  await assert.rejects(auth.signSession(session, "short"));
++});
++test("access codes preserve whitespace and cookies respect local HTTP and duplicate boundaries", async () => {
++  assert.ok(auth);
++  assert.equal(await auth.checkAccessCode("abc", "abc"), true);
++  for (const [a,b] of [["", ""], ["abc ", "abc"], ["abc", "abd"], ["x".repeat(129), "x".repeat(129)]]) assert.equal(await auth.checkAccessCode(a,b), false);
++  const cookie = auth.sessionCookie("abc.def", "https://example.test");
++  for (const flag of ["buddy_session=abc.def", "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=604800", "Secure"]) assert.ok(cookie.includes(flag));
++  assert.ok(!auth.sessionCookie("abc.def", "http://localhost").includes("Secure"));
++  const read = (cookie: string) => auth.readSessionCookie(new Request("http://localhost", { headers: { cookie } }));
++  assert.equal(read("other=x; buddy_session=abc.def"), "abc.def");
++  assert.equal(read("buddy_session=a; buddy_session=b"), null);
++  assert.equal(read(`buddy_session=${"x".repeat(2000)}`), null);
++  assert.equal(read("other=x"), null);
++});
+diff --git a/tests/repository.test.ts b/tests/repository.test.ts
+new file mode 100644
+index 0000000..266762c
+--- /dev/null
++++ b/tests/repository.test.ts
+@@ -0,0 +1,93 @@
++import test from "node:test";
++import assert from "node:assert/strict";
++import { sqliteD1 } from "./support/d1.ts";
++import type { RunRecord } from "../lib/buddy/repository.ts";
++const module = await import("../lib/buddy/repository.ts").catch(() => null);
++function record(id = crypto.randomUUID()): RunRecord {
++  return { run: { id, ownerId: "owner-a", mode: "demo", goal: "research", title: "test", status: "awaiting_approval", approved: false, createdAt: "2026-10-02T00:00:00Z", updatedAt: "2026-10-02T00:00:00Z", plan: [], evidence: [], events: [], contextSummary: "", metrics: { toolCalls: 0, modelCalls: 0, inputTokens: 0, outputTokens: 0, estimatedUsd: 0, elapsedMs: 0 }, limits: { maxToolCalls: 10, maxModelCalls: 10, maxEstimatedUsd: 1, maxRuntimeMs: 300000 }, version: 0, checkpoint: { cursor: 0, completedTaskIds: [], savedAt: "2026-10-02T00:00:00Z" }, memory: [] }, symbols: ["000001"], scenario: "normal", planning: true, reviewAttempts: 0, retryAt: 0, leaseId: null, leaseUntil: 0 };
++}
++function evidence(id = "e1") { return { id, title: "Revenue", provider: "fixture", sourceUrl: "https://example.test", retrievedAt: "2026-10-02T00:00:00Z", asOf: null, unit: "CNY", scope: "annual", quality: "valid" as const, summary: "record", raw: { rows: [1, 2, 3], 中文: "完整" }, hash: "sha256:abc", metrics: [{ key: "revenue", label: "Revenue", value: 12, unit: "CNY" }], series: [{ date: "2026-10-01", value: 12 }] }; }
++function setup() { assert.ok(module, "repository implementation must exist"); const database = sqliteD1(); return { ...database, repo: new module.BuddyRepository(database.db) }; }
++test("roundtrip preserves evidence and rejects cross-owner/mode and duplicate run IDs", async () => {
++  const { repo, sqlite } = setup(); const r = record(); r.run.evidence = [evidence()];
++  await repo.insert(r); assert.deepEqual(await repo.get(r.run.id, "owner-a", "demo"), r);
++  assert.equal(await repo.get(r.run.id, "owner-b", "demo"), null); assert.equal(await repo.get(r.run.id, "owner-a", "live"), null);
++  assert.deepEqual(await repo.list("owner-b", "demo"), []); assert.deepEqual(await repo.list("owner-a", "live"), []);
++  assert.equal("evidence" in (await repo.list("owner-a", "demo"))[0], false);
++  const other = structuredClone(r); other.run.ownerId = "owner-b"; await assert.rejects(repo.insert(other));
++  const row = sqlite.prepare("SELECT run_json FROM buddy_runs").get()!; assert.equal(JSON.parse(String(row.run_json)).evidence[0].raw, null);
++  sqlite.close();
++});
++test("CAS conflict adds no late evidence; immutable evidence collision rolls back the entire batch", async () => {
++  const { repo, sqlite } = setup(); const r = record(); await repo.insert(r);
++  const next = structuredClone(r); next.run.version = 1; next.run.evidence = [evidence()]; assert.equal(await repo.save(next, 0), true);
++  const stale = structuredClone(r); stale.run.version = 2; stale.run.evidence = [evidence("late")]; assert.equal(await repo.save(stale, 0), false);
++  const unauthorized = structuredClone(next); unauthorized.run.version = 2; unauthorized.run.ownerId = "owner-b";
++  assert.equal(await repo.save(unauthorized, 1), false); unauthorized.run.ownerId = "owner-a"; unauthorized.run.mode = "live"; assert.equal(await repo.save(unauthorized, 1), false);
++  next.run.version = 2; assert.equal(await repo.save(next, 1), true); next.run.version = 3;
++  assert.equal(sqlite.prepare("SELECT count(*) n FROM buddy_evidence").get()!.n, 1);
++  next.run.evidence.unshift(evidence("new")); next.run.evidence[1].raw = { rows: [9], 中文: "different" };
++  await assert.rejects(repo.save(next, 2)); assert.equal(sqlite.prepare("SELECT count(*) n FROM buddy_evidence").get()!.n, 1);
++  assert.equal((await repo.get(r.run.id, "owner-a", "demo"))!.run.version, 2);
++  sqlite.close();
++});
++test("lease acquisition is exclusive, expiring lease preserves run, and user save invalidates old worker", async () => {
++  const { repo, sqlite } = setup(); const r = record(); await repo.insert(r);
++  await assert.rejects(repo.acquire(r.run.id, "owner-a", "demo", 1000, 180001));
++  const winners = (await Promise.all(Array.from({ length: 8 }, () => repo.acquire(r.run.id, "owner-a", "demo", 1000, 90000)))).filter(Boolean);
++  assert.equal(winners.length, 1); const held = winners[0]!;
++  assert.deepEqual(held.record.run, r.run); assert.equal(held.record.leaseUntil, 91000);
++  assert.equal(await repo.acquire(r.run.id, "owner-b", "demo", 1000), null);
++  assert.equal(await repo.acquire(r.run.id, "owner-a", "live", 1000), null);
++  const newer = await repo.acquire(r.run.id, "owner-a", "demo", 91000); assert.ok(newer); assert.deepEqual(newer.record.run, r.run);
++  const worker = structuredClone(newer.record); worker.run.version = 1;
++  assert.equal(await repo.save(worker, 0, held.leaseId), false);
++  assert.equal(await repo.save(worker, 0, newer.leaseId), true);
++  assert.equal((await repo.get(r.run.id, "owner-a", "demo"))!.leaseId, newer.leaseId);
++  worker.run.version = 2; worker.run.status = "stopped"; assert.equal(await repo.save(worker, 1), true);
++  worker.run.version = 3; worker.run.evidence = [evidence("late")]; assert.equal(await repo.save(worker, 2, newer.leaseId), false);
++  assert.equal((await repo.get(r.run.id, "owner-a", "demo"))!.leaseId, null);
++  assert.equal(await repo.release(r.run.id, "owner-a", "demo", newer.leaseId), false);
++  const released = await repo.acquire(r.run.id, "owner-a", "demo", 999999); assert.ok(released);
++  assert.equal(await repo.release(r.run.id, "owner-a", "demo", released.leaseId), true);
++  assert.equal((await repo.get(r.run.id, "owner-a", "demo"))!.run.version, 2); sqlite.close();
++});
++test("global atomic budget reserves respect cap and settlement is once-only and conservative", async () => {
++  const { repo, sqlite } = setup();
++  const reserved = await Promise.all(Array.from({ length: 20 }, (_, i) => repo.reserveBudget("2026-10-02", 0.25, 1, `t${i}`, `owner${i}`, "run")));
++  assert.equal(reserved.filter(Boolean).length, 4); assert.deepEqual(await repo.budget("2026-10-02"), { spent: 0, reserved: 1 });
++  assert.equal(await repo.reserveBudget("2026-10-02", 0, 1, "t0", "x", "r"), false);
++  assert.equal(await repo.settleBudget("t0", null), true); assert.equal(await repo.settleBudget("t0", 0), false);
++  assert.equal(await repo.settleBudget("t1", 0.5), true); assert.deepEqual(await repo.budget("2026-10-02"), { spent: 0.75, reserved: 0.5 });
++  assert.equal(await repo.reserveBudget("2026-10-02", 0.01, 1, "extra", "x", "r"), false);
++  for (const day of ["2026-02-30", "2026-1-01", "bad"]) await assert.rejects(repo.reserveBudget(day, 0, 1, "x", "o", "r"));
++  for (const amount of [-1, Infinity, NaN]) { await assert.rejects(repo.reserveBudget("2026-10-03", amount, 1, "x", "o", "r")); await assert.rejects(repo.settleBudget("t2", amount)); }
++  await assert.rejects(repo.reserveBudget("2026-10-03", 0, Infinity, "x", "o", "r"));
++  assert.equal(await repo.reserveBudget("2026-10-03", 0, 0, "zero", "o", "r"), true);
++  assert.equal(await repo.settleBudget("missing", 0), false);
++  sqlite.close();
++});
++test("memory cap, unique ids and isolation; atomic rate-limit window", async () => {
++  const { repo, sqlite } = setup();
++  const entry = { id: "m0", text: "preference", kind: "preference" as const, createdAt: "2026-10-02" };
++  await repo.addMemory("owner-a", "demo", entry); await assert.rejects(repo.addMemory("owner-b", "live", entry));
++  for (let i = 1; i < 50; i++) await repo.addMemory("owner-a", "demo", { ...entry, id: `m${i}` });
++  await assert.rejects(repo.addMemory("owner-a", "demo", { ...entry, id: "overflow" }));
++  assert.equal((await repo.memories("owner-a", "demo")).length, 50); assert.deepEqual(await repo.memories("owner-a", "live"), []);
++  assert.equal(await repo.deleteMemory("owner-b", "demo", "m0"), false); assert.equal(await repo.deleteMemory("owner-a", "live", "m0"), false);
++  assert.equal(await repo.deleteMemory("owner-a", "demo", "m0"), true);
++  await assert.rejects(repo.addMemory("owner-a", "demo", { ...entry, text: "a".repeat(2001) }));
++  assert.deepEqual(await Promise.all(Array.from({ length: 5 }, () => repo.rateLimit("k", 1000, 2, 999))), [true, true, false, false, false]);
++  assert.equal(await repo.rateLimit("k", 1000, 2, 1000), true); assert.equal(await repo.rateLimit("other", 1000, 2, 999), true); sqlite.close();
++});
++test("row and evidence count bounds reject writes without partial data; list is bounded and sorted", async () => {
++  const { repo, sqlite } = setup(); const r = record(); r.run.evidence = [{ ...evidence(), raw: "中".repeat(310000) }];
++  await assert.rejects(repo.insert(r)); assert.equal(sqlite.prepare("SELECT count(*) n FROM buddy_runs").get()!.n, 0);
++  r.run.evidence = []; r.run.contextSummary = "x".repeat(900001); await assert.rejects(repo.insert(r));
++  r.run.contextSummary = ""; r.run.evidence = Array.from({ length: 26 }, (_, i) => evidence(`e${i}`)); await assert.rejects(repo.insert(r));
++  r.run.evidence = []; await repo.insert(r); r.run.version = 1; r.run.evidence = [{ ...evidence(), raw: "中".repeat(310000) }];
++  await assert.rejects(repo.save(r, 0)); assert.equal((await repo.get(r.run.id, "owner-a", "demo"))!.run.version, 0);
++  assert.equal(sqlite.prepare("SELECT count(*) n FROM buddy_evidence").get()!.n, 0);
++  for (let i = 0; i < 32; i++) { const n = record(); n.run.updatedAt = new Date(1800000000000 + i).toISOString(); await repo.insert(n); }
++  const list = await repo.list("owner-a", "demo"); assert.equal(list.length, 30); assert.ok(list[0].updatedAt > list[29].updatedAt); sqlite.close();
++});
+diff --git a/tests/support/d1.ts b/tests/support/d1.ts
+new file mode 100644
+index 0000000..a507822
+--- /dev/null
++++ b/tests/support/d1.ts
+@@ -0,0 +1,30 @@
++import { DatabaseSync } from "node:sqlite";
++import { readdirSync, readFileSync } from "node:fs";
++import type { BuddyDatabase, BuddyStatement, BuddyResult } from "../../lib/buddy/repository.ts";
++export function sqliteD1() {
++  const sqlite = new DatabaseSync(":memory:");
++  sqlite.exec("PRAGMA foreign_keys = ON");
++  const dir = new URL("../../drizzle/", import.meta.url);
++  for (const name of readdirSync(dir).filter(n => n.endsWith(".sql")).sort()) sqlite.exec(readFileSync(new URL(name, dir), "utf8"));
++  class Statement implements BuddyStatement {
++    sql: string; values: (string | number | null)[] = [];
++    constructor(sql: string) { if (sql.trim().replace(/;$/, "").includes(";")) throw new Error("D1 prepare accepts one SQL statement"); this.sql = sql; }
++    bind(...values: (string | number | null)[]) { const s = new Statement(this.sql); s.values = values; return s; }
++    async first<T>() { const row = sqlite.prepare(this.sql).get(...this.values); return row ? { ...row } as T : null; }
++    async all<T>() { return { results: sqlite.prepare(this.sql).all(...this.values).map(row => ({ ...row })) as T[] }; }
++    execute(): BuddyResult { const r = sqlite.prepare(this.sql).run(...this.values); return { meta: { changes: Number(r.changes) } }; }
++    async run(): Promise<BuddyResult> { return this.execute(); }
++  }
++  const db: BuddyDatabase = {
++    prepare: sql => new Statement(sql),
++    async batch(statements) {
++      sqlite.exec("BEGIN IMMEDIATE");
++      try {
++        const results = [];
++        for (const s of statements) results.push((s as Statement).execute());
++        sqlite.exec("COMMIT"); return results;
++      } catch (e) { sqlite.exec("ROLLBACK"); throw e; }
++    },
++  };
++  return { db, sqlite };
++}

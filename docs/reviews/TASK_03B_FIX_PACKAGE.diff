@@ -1,0 +1,104 @@
+diff --git a/lib/buddy/repository.ts b/lib/buddy/repository.ts
+index f359001..d1b48bd 100644
+--- a/lib/buddy/repository.ts
++++ b/lib/buddy/repository.ts
+@@ -18,27 +18,23 @@ export interface RunRecord {
+ export type RunSummary = Pick<AgentRun, "id" | "title" | "goal" | "mode" | "status" | "createdAt" | "updatedAt" | "metrics" | "version"> & { symbols: string[]; planning: boolean };
+ interface RunRow { id: string; owner_id: string; mode: RunMode; version: number; run_json: string; symbols: string; scenario: RunRecord["scenario"]; planning: number; review_attempts: number; retry_at: number; lease_id: string | null; lease_until: number; }
+ type Value = string | number | null;
+ const utf8 = new TextEncoder();
+ function modeCheck(mode: RunMode) { if (mode !== "demo" && mode !== "live") throw new Error("Invalid mode"); }
+ function bounded(values: unknown) { if (utf8.encode(JSON.stringify(values)).length > 900000) throw new Error("Database row exceeds 900000 UTF-8 bytes"); }
+ function finiteNonnegative(n: number) { if (!Number.isFinite(n) || n < 0) throw new Error("Expected finite nonnegative number"); }
+ function dayCheck(day: string) { if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(Date.parse(day)) || new Date(day).toISOString().slice(0, 10) !== day) throw new Error("Invalid UTC budget day"); }
+-// Stable serialization makes a repeated evidence object independent of property insertion order.
+-function canonical(value: unknown): string {
+-  return JSON.stringify(value, (_key, current) => current && typeof current === "object" && !Array.isArray(current)
+-    ? Object.fromEntries(Object.keys(current).sort().map(key => [key, current[key]])) : current);
+-}
+ function serialize(record: RunRecord) {
+   const r = record.run; modeCheck(r.mode);
+   if (!r.id || !r.ownerId || !Number.isSafeInteger(r.version) || r.version < 0 || r.evidence.length > 25 || new Set(r.evidence.map(e => e.id)).size !== r.evidence.length) throw new Error("Invalid run or evidence bounds");
+   const evidence = r.evidence.map(e => {
+     if (!e.id || typeof e.hash !== "string") throw new Error("Invalid evidence identity");
+-    const json = canonical(e); bounded([r.id, e.id, json, e.hash]); return { id: e.id, hash: e.hash, json };
++    // The evidence hash covers JSON.stringify(raw); preserve the original property order.
++    const json = JSON.stringify(e); bounded([r.id, e.id, json, e.hash]); return { id: e.id, hash: e.hash, json };
+   });
+   const json = JSON.stringify({ ...r, evidence: r.evidence.map(e => ({ ...e, raw: null })) });
+   const values: Value[] = [r.id, r.ownerId, r.mode, r.version, r.updatedAt, json, JSON.stringify(record.symbols), record.scenario, Number(record.planning), record.reviewAttempts, record.retryAt, record.leaseId, record.leaseUntil];
+   bounded(values); return { json, values, evidence };
+ }
+ export class BuddyRepository {
+   private db: BuddyDatabase;
+   constructor(db: BuddyDatabase) { this.db = db; }
+@@ -108,12 +104,13 @@ export class BuddyRepository {
+   }
+   async budget(day: string): Promise<{ spent: number; reserved: number }> {
+     dayCheck(day);
+     return (await this.query("SELECT COALESCE(SUM(CASE WHEN status='settled' THEN actual ELSE 0 END),0) AS spent,COALESCE(SUM(CASE WHEN status='pending' THEN amount ELSE 0 END),0) AS reserved FROM buddy_model_reservations WHERE day=?", day).first<{ spent: number; reserved: number }>())!;
+   }
+   async rateLimit(key: string, windowMs: number, max: number, now: number): Promise<boolean> {
+     if (!Number.isSafeInteger(windowMs) || windowMs <= 0 || !Number.isSafeInteger(max) || max < 1 || !Number.isSafeInteger(now)) throw new Error("Invalid rate limit");
+     bounded(key); const start = Math.floor(now / windowMs) * windowMs;
+-    const result = await this.query("INSERT INTO buddy_rate_limits (key,window_start,window_ms,count) VALUES (?,?,?,1) ON CONFLICT(key) DO UPDATE SET window_start=excluded.window_start,window_ms=excluded.window_ms,count=CASE WHEN buddy_rate_limits.window_start=excluded.window_start AND buddy_rate_limits.window_ms=excluded.window_ms THEN buddy_rate_limits.count+1 ELSE 1 END WHERE buddy_rate_limits.window_start<>excluded.window_start OR buddy_rate_limits.window_ms<>excluded.window_ms OR buddy_rate_limits.count<?", key, start, windowMs, max).run();
++    // Reject delayed requests from older windows instead of resetting the current count.
++    const result = await this.query("INSERT INTO buddy_rate_limits (key,window_start,window_ms,count) VALUES (?,?,?,1) ON CONFLICT(key) DO UPDATE SET window_start=excluded.window_start,window_ms=excluded.window_ms,count=CASE WHEN buddy_rate_limits.window_start=excluded.window_start AND buddy_rate_limits.window_ms=excluded.window_ms THEN buddy_rate_limits.count+1 ELSE 1 END WHERE buddy_rate_limits.window_start<excluded.window_start OR (buddy_rate_limits.window_start=excluded.window_start AND (buddy_rate_limits.window_ms<>excluded.window_ms OR buddy_rate_limits.count<?))", key, start, windowMs, max).run();
+     return result.meta.changes === 1;
+   }
+ }
+diff --git a/tests/repository.test.ts b/tests/repository.test.ts
+index 266762c..972d42d 100644
+--- a/tests/repository.test.ts
++++ b/tests/repository.test.ts
+@@ -1,11 +1,12 @@
+ import test from "node:test";
+ import assert from "node:assert/strict";
+ import { sqliteD1 } from "./support/d1.ts";
++import { sha256 } from "../lib/buddy/data.ts";
+ import type { RunRecord } from "../lib/buddy/repository.ts";
+ const module = await import("../lib/buddy/repository.ts").catch(() => null);
+ function record(id = crypto.randomUUID()): RunRecord {
+   return { run: { id, ownerId: "owner-a", mode: "demo", goal: "research", title: "test", status: "awaiting_approval", approved: false, createdAt: "2026-10-02T00:00:00Z", updatedAt: "2026-10-02T00:00:00Z", plan: [], evidence: [], events: [], contextSummary: "", metrics: { toolCalls: 0, modelCalls: 0, inputTokens: 0, outputTokens: 0, estimatedUsd: 0, elapsedMs: 0 }, limits: { maxToolCalls: 10, maxModelCalls: 10, maxEstimatedUsd: 1, maxRuntimeMs: 300000 }, version: 0, checkpoint: { cursor: 0, completedTaskIds: [], savedAt: "2026-10-02T00:00:00Z" }, memory: [] }, symbols: ["000001"], scenario: "normal", planning: true, reviewAttempts: 0, retryAt: 0, leaseId: null, leaseUntil: 0 };
+ }
+ function evidence(id = "e1") { return { id, title: "Revenue", provider: "fixture", sourceUrl: "https://example.test", retrievedAt: "2026-10-02T00:00:00Z", asOf: null, unit: "CNY", scope: "annual", quality: "valid" as const, summary: "record", raw: { rows: [1, 2, 3], 中文: "完整" }, hash: "sha256:abc", metrics: [{ key: "revenue", label: "Revenue", value: 12, unit: "CNY" }], series: [{ date: "2026-10-01", value: 12 }] }; }
+ function setup() { assert.ok(module, "repository implementation must exist"); const database = sqliteD1(); return { ...database, repo: new module.BuddyRepository(database.db) }; }
+ test("roundtrip preserves evidence and rejects cross-owner/mode and duplicate run IDs", async () => {
+@@ -86,8 +87,37 @@ test("row and evidence count bounds reject writes without partial data; list is
+   r.run.evidence = []; r.run.contextSummary = "x".repeat(900001); await assert.rejects(repo.insert(r));
+   r.run.contextSummary = ""; r.run.evidence = Array.from({ length: 26 }, (_, i) => evidence(`e${i}`)); await assert.rejects(repo.insert(r));
+   r.run.evidence = []; await repo.insert(r); r.run.version = 1; r.run.evidence = [{ ...evidence(), raw: "中".repeat(310000) }];
+   await assert.rejects(repo.save(r, 0)); assert.equal((await repo.get(r.run.id, "owner-a", "demo"))!.run.version, 0);
+   assert.equal(sqlite.prepare("SELECT count(*) n FROM buddy_evidence").get()!.n, 0);
+   for (let i = 0; i < 32; i++) { const n = record(); n.run.updatedAt = new Date(1800000000000 + i).toISOString(); await repo.insert(n); }
+   const list = await repo.list("owner-a", "demo"); assert.equal(list.length, 30); assert.ok(list[0].updatedAt > list[29].updatedAt); sqlite.close();
+ });
++test("late requests cannot rewind the rate-limit window or replenish its count", async () => {
++  const { repo, sqlite } = setup();
++  const results = [];
++  for (const now of [1000, 1000, 999, 1001]) results.push(await repo.rateLimit("out-of-order", 1000, 2, now));
++  assert.deepEqual(results, [true, true, false, false]);
++  const current = sqlite.prepare("SELECT window_start,count FROM buddy_rate_limits WHERE key=?").get("out-of-order")!;
++  assert.equal(current.window_start, 1000); assert.equal(current.count, 2);
++  assert.deepEqual(await Promise.all([2000, 1999, 2001, 1998, 2002].map(now => repo.rateLimit("out-of-order", 1000, 2, now))), [true, false, true, false, false]);
++  const advanced = sqlite.prepare("SELECT window_start,count FROM buddy_rate_limits WHERE key=?").get("out-of-order")!;
++  assert.equal(advanced.window_start, 2000); assert.equal(advanced.count, 2);
++  sqlite.close();
++});
++test("evidence reload retains raw JSON property order and its original SHA-256", async () => {
++  const { repo, sqlite } = setup(); const r = record();
++  const raw = { z: 1, a: { z: 2, a: 3 }, rows: [{ z: 4, a: 5 }] };
++  const hash = await sha256(raw);
++  r.run.evidence = [{ ...evidence(), raw, hash }];
++  await repo.insert(r);
++  const inserted = (await repo.get(r.run.id, "owner-a", "demo"))!.run.evidence[0];
++  assert.equal(await sha256(inserted.raw), hash);
++  assert.equal(JSON.stringify(inserted.raw), JSON.stringify(raw));
++  assert.equal(inserted.hash, hash);
++  const saved = structuredClone(r); saved.run.version = 1;
++  saved.run.evidence.push({ ...evidence("second"), raw, hash });
++  assert.equal(await repo.save(saved, 0), true);
++  const restored = (await repo.get(r.run.id, "owner-a", "demo"))!.run.evidence;
++  for (const e of restored) { assert.equal(await sha256(e.raw), hash); assert.equal(e.hash, hash); }
++  sqlite.close();
++});

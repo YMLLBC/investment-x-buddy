@@ -1,0 +1,78 @@
+diff --git a/lib/buddy/repository.ts b/lib/buddy/repository.ts
+index d1b48bd..d9aae5c 100644
+--- a/lib/buddy/repository.ts
++++ b/lib/buddy/repository.ts
+@@ -18,23 +18,34 @@ export interface RunRecord {
+ export type RunSummary = Pick<AgentRun, "id" | "title" | "goal" | "mode" | "status" | "createdAt" | "updatedAt" | "metrics" | "version"> & { symbols: string[]; planning: boolean };
+ interface RunRow { id: string; owner_id: string; mode: RunMode; version: number; run_json: string; symbols: string; scenario: RunRecord["scenario"]; planning: number; review_attempts: number; retry_at: number; lease_id: string | null; lease_until: number; }
+ type Value = string | number | null;
+ const utf8 = new TextEncoder();
+ function modeCheck(mode: RunMode) { if (mode !== "demo" && mode !== "live") throw new Error("Invalid mode"); }
+ function bounded(values: unknown) { if (utf8.encode(JSON.stringify(values)).length > 900000) throw new Error("Database row exceeds 900000 UTF-8 bytes"); }
+ function finiteNonnegative(n: number) { if (!Number.isFinite(n) || n < 0) throw new Error("Expected finite nonnegative number"); }
+ function dayCheck(day: string) { if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(Date.parse(day)) || new Date(day).toISOString().slice(0, 10) !== day) throw new Error("Invalid UTC budget day"); }
++function canonicalMetadata(value: unknown): unknown {
++  if (Array.isArray(value)) return value.map(canonicalMetadata);
++  if (value && typeof value === "object") {
++    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, child]) => [key, canonicalMetadata(child)]));
++  }
++  return value;
++}
++function evidenceJson(evidence: Evidence): string {
++  // Exclude raw before recursion: its complete property order is part of the source hash.
++  const { raw, ...metadata } = evidence;
++  return JSON.stringify({ ...canonicalMetadata(metadata) as Record<string, unknown>, raw });
++}
+ function serialize(record: RunRecord) {
+   const r = record.run; modeCheck(r.mode);
+   if (!r.id || !r.ownerId || !Number.isSafeInteger(r.version) || r.version < 0 || r.evidence.length > 25 || new Set(r.evidence.map(e => e.id)).size !== r.evidence.length) throw new Error("Invalid run or evidence bounds");
+   const evidence = r.evidence.map(e => {
+     if (!e.id || typeof e.hash !== "string") throw new Error("Invalid evidence identity");
+-    // The evidence hash covers JSON.stringify(raw); preserve the original property order.
+-    const json = JSON.stringify(e); bounded([r.id, e.id, json, e.hash]); return { id: e.id, hash: e.hash, json };
++    const json = evidenceJson(e); bounded([r.id, e.id, json, e.hash]); return { id: e.id, hash: e.hash, json };
+   });
+   const json = JSON.stringify({ ...r, evidence: r.evidence.map(e => ({ ...e, raw: null })) });
+   const values: Value[] = [r.id, r.ownerId, r.mode, r.version, r.updatedAt, json, JSON.stringify(record.symbols), record.scenario, Number(record.planning), record.reviewAttempts, record.retryAt, record.leaseId, record.leaseUntil];
+   bounded(values); return { json, values, evidence };
+ }
+ export class BuddyRepository {
+   private db: BuddyDatabase;
+   constructor(db: BuddyDatabase) { this.db = db; }
+diff --git a/tests/repository.test.ts b/tests/repository.test.ts
+index 972d42d..ed66126 100644
+--- a/tests/repository.test.ts
++++ b/tests/repository.test.ts
+@@ -116,8 +116,32 @@ test("evidence reload retains raw JSON property order and its original SHA-256",
+   assert.equal(inserted.hash, hash);
+   const saved = structuredClone(r); saved.run.version = 1;
+   saved.run.evidence.push({ ...evidence("second"), raw, hash });
+   assert.equal(await repo.save(saved, 0), true);
+   const restored = (await repo.get(r.run.id, "owner-a", "demo"))!.run.evidence;
+   for (const e of restored) { assert.equal(await sha256(e.raw), hash); assert.equal(e.hash, hash); }
+   sqlite.close();
+ });
++test("reordered evidence metadata remains idempotent without changing raw bytes or hash", async () => {
++  const { repo, sqlite } = setup(); const r = record();
++  const raw = { z: 1, a: { z: 2, a: 3 }, rows: [{ z: 4, a: 5 }] };
++  const original = { ...evidence(), raw, hash: await sha256(raw) };
++  r.run.evidence = [original]; await repo.insert(r);
++  const storedBefore = sqlite.prepare("SELECT evidence_json FROM buddy_evidence WHERE run_id=? AND id=?").get(r.run.id, original.id)!.evidence_json;
++  const reordered = Object.fromEntries(Object.entries(original).reverse()) as typeof original;
++  reordered.metrics = original.metrics.map(metric => Object.fromEntries(Object.entries(metric).reverse()) as typeof metric);
++  reordered.series = original.series.map(point => Object.fromEntries(Object.entries(point).reverse()) as typeof point);
++  assert.deepEqual(reordered, original);
++  assert.equal(JSON.stringify(reordered.raw), JSON.stringify(original.raw));
++  r.run.evidence = [reordered]; r.run.version = 1;
++  assert.equal(await repo.save(r, 0), true);
++  const restored = (await repo.get(r.run.id, "owner-a", "demo"))!;
++  assert.equal(restored.run.version, 1);
++  assert.deepEqual(restored.run.evidence[0], original);
++  assert.equal(JSON.stringify(restored.run.evidence[0].raw), JSON.stringify(raw));
++  assert.equal(await sha256(restored.run.evidence[0].raw), original.hash);
++  assert.equal(sqlite.prepare("SELECT evidence_json FROM buddy_evidence WHERE run_id=? AND id=?").get(r.run.id, original.id)!.evidence_json, storedBefore);
++  r.run.version = 2; r.run.evidence[0].title = "different metadata";
++  await assert.rejects(repo.save(r, 1));
++  assert.equal((await repo.get(r.run.id, "owner-a", "demo"))!.run.version, 1);
++  sqlite.close();
++});

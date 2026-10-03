@@ -1,0 +1,18 @@
+import test from "node:test";import assert from "node:assert/strict";
+import { demoPlan, executeDemo } from "../lib/buddy/demo.ts";import { buildResearchReport } from "../lib/buddy/research.ts";
+import {createRun,approveRun,beginTask,succeedTask,completeRun,validatePlan} from "../lib/buddy/harness.ts";import {curatedTools,ProviderError} from "../lib/buddy/providers.ts";import {validateReport} from "../lib/buddy/report.ts";
+const now="2026-10-02T12:00:00.000Z",symbols=["600519.SH","000858.SZ","000568.SZ"];
+async function pipeline(scenario:"normal"|"missing"="normal"){const plan=demoPlan(symbols);validatePlan(plan,curatedTools());let run=approveRun(createRun({id:"demo-r",ownerId:"demo-o",goal:"核验盈利质量",title:"演示",mode:"demo",plan,now}),true,now);for(const t of run.plan){run=beginTask(run,t.id,now);const active=run.plan.find(p=>p.id===t.id)!;const evidence=await executeDemo(active,scenario,now);assert.match(evidence.provider,/构造|演示/);run=succeedTask(run,t.id,[evidence],now)}return run}
+test("public demo completes through real harness with constructed data, original field facts and cited calculations",async()=>{const run=await pipeline();const report=buildResearchReport(run);assert.match(report.summary,/构造/);assert.ok(report.claims.some(c=>c.kind==="fact"));assert.ok(report.claims.some(c=>c.kind==="inference"));validateReport(report,run.evidence);assert.equal(completeRun(run,report,now).status,"completed");assert.equal(run.metrics.modelCalls,0)});
+test("missing demo cashflow produces unknown and does not invent a zero or fact",async()=>{const run=await pipeline("missing"),report=buildResearchReport(run);validateReport(report,run.evidence);assert.ok(report.claims.some(c=>c.kind==="unknown"&&c.text.includes("000568.SZ")));assert.ok(!report.claims.some(c=>c.kind==="fact"&&c.text.includes("000568.SZ")&&c.text.includes("经营活动现金流净额")));const raw=run.evidence.find(e=>e.symbol==="000568.SZ"&&e.title.includes("现金流"))!;assert.equal(raw.metrics?.find(m=>m.key==="act_cash_flow_net")?.value,null)});
+test("failure demo is a real transient tool failure and only the first eligible attempt fails",async()=>{const t=demoPlan(symbols).find(t=>t.tool==="fuyao_income"&&t.arguments.symbol==="600519.SH")!;await assert.rejects(()=>executeDemo({...t,attempts:1},"failure",now),e=>e instanceof ProviderError&&e.retryable);assert.ok(await executeDemo({...t,attempts:2},"failure",now))});
+
+import {normalizeFuyao} from "../lib/buddy/data.ts";
+test("single-year constructed demo explicitly discloses insufficient historical coverage",async()=>{
+ const run=await pipeline(),report=buildResearchReport(run);assert.ok(report.limitations.some(l=>/仅覆盖1个.*年度.*不足3/.test(l)));assert.ok(report.claims.some(c=>c.kind==="fact"));validateReport(report,run.evidence);
+});
+test("report marks overflowing ratios unknown and never emits an Infinity inference",async()=>{
+ const run=await pipeline(),s=symbols[0],base={thscode:s,currency:"CNY",period:"annual",fiscal_year:2025,fiscal_period:"FY",period_end_ms:Date.parse("2025-12-31T00:00:00+08:00")},opt={id:"tiny",symbol:s,retrievedAt:now,sourceUrl:"https://fuyao.aicubes.cn/api/probe"};
+ run.evidence=[await normalizeFuyao("income",{data:{item:[{...base,operating_income:100,net_profit:1e-300}]}},opt),await normalizeFuyao("cashflow",{data:{item:[{...base,act_cash_flow_net:9007199254740991}]}},{...opt,id:"large"})];run.plan=run.plan.filter(t=>t.arguments.symbol===s);
+ const report=buildResearchReport(run);assert.ok(report.claims.some(c=>c.kind==="unknown"&&/计算|溢出|有限/.test(c.text)));assert.ok(!report.claims.some(c=>/Infinity|NaN/.test(c.text)));validateReport(report,run.evidence);
+});
